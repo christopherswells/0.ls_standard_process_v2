@@ -95,7 +95,9 @@ else:
 #INPUT FILES
 DATA_TEMPLATE = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_data_template.xlsx"
 
-COMBINED_FILE = DATA_ROOT / f"_{STATE_ABR}{DATA_YEAR}_combined_file"
+COMBINED_FILE = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_combined_file.xlsx"
+
+SETTINGS_EXCEL_FILE = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_data_prep_settings.xlsx"
 
 
 
@@ -109,14 +111,15 @@ OUT_PARTNER_COUNTS = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_partner_counts.xlsx"
 # SETTINGS-- GLOBAL VARIABLES TO RUN STUDY SCRIPTS
 #===============================================================
 
-# try:
-#     settings_xl = pd.read_excel(SETTINGS_EXCEL_FILE, sheet_name = SETTINGS_EXCEL_FILE)
-#     settings_xl['STUDY_GRADES'] = settings_xl['STUDY_GRADES'].fillna(DEFAULT_GRADES)
-#     settings_xl['STUDY_GRADES'] = settings_xl['STUDY_GRADES'].apply(lambda x: [int(g) for g in str(x).split(',')])
+try:
+    settings_xl = pd.read_excel(SETTINGS_EXCEL_FILE, sheet_name = SETTINGS_EXCEL_FILE)
+    # settings_xl['STUDY_GRADES'] = settings_xl['STUDY_GRADES'].fillna(DEFAULT_GRADES)
+    # settings_xl['STUDY_GRADES'] = settings_xl['STUDY_GRADES'].apply(lambda x: [int(g) for g in str(x).split(',')])
     
-# except:
-#     print('DOES THE SETTINGS.PY FILE IN THE ROOT HAVE A SETTINGS TAB?')
-#     print(DATA_ROOT)
+except:
+    print()
+    print('DOES THE SETTINGS.PY FILE IN THE ROOT HAVE A SETTINGS TAB?')
+    print(DATA_ROOT)
     
 
 
