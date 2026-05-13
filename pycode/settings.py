@@ -120,11 +120,7 @@ OUTPUT = make_versioned_dir(OUTPUT)
 #INPUT FILES
 DATA_TEMPLATE = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_data_template.xlsx"
 
-COMBINED_FILE = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_combined_file.xlsx"
-
 SETTINGS_EXCEL_FILE = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_data_prep_settings.xlsx"
-
-
 
 
 
@@ -134,6 +130,8 @@ OUT_MAP_COUNTS = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_map_counts.xlsx"
 OUT_PARTNER_COUNTS = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_partner_counts.xlsx"
 
 DATA_LOG = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_district_data_log.xlsx"
+
+COMBINED_FILE = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_combined_file.xlsx"
 
 
 #===============================================================
