@@ -77,14 +77,39 @@ for folder in [ORIGINAL_FILES, REJECTED_FILES, EDITED_FILES, WORKING_FILES]:
 # AND RESTART PROGRAM.  
 # TODO: ADD AUTO-VERSIONING OR   
 #------------------------------------------------------------------
+
+def make_versioned_dir(base_path: Path) -> Path:
+    """
+    Create a versioned directory:
+    base_path, base_path_1, base_path_2, ...
+    Returns the path that was created.
+    """
+    if not base_path.exists():
+        base_path.mkdir(parents=True)
+        print(f"[INFO] Created: {base_path}")
+        return base_path
+
+    # If base exists, increment
+    counter = 1
+    while True:
+        candidate = Path(f"{base_path}_{counter}")
+        if not candidate.exists():
+            candidate.mkdir(parents=True)
+            print(f"[INFO] Created: {candidate}")
+            return candidate
+        counter += 1
+
+
 OUTPUT = DATA_ROOT / "output"
+OUTPUT = make_versioned_dir(OUTPUT)
 
-if OUTPUT.exists():
-    print(f"[ERROR] Output path already exists: {OUTPUT}")
-    sys.exit(1)
 
-else:
-    OUTPUT.mkdir(parents=True, exist_ok=True)
+# if OUTPUT.exists():
+#     print(f"[ERROR] Output path already exists: {OUTPUT}")
+#     sys.exit(1)
+
+# else:
+#     OUTPUT.mkdir(parents=True, exist_ok=True)
     
 
 
@@ -112,7 +137,8 @@ OUT_PARTNER_COUNTS = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_partner_counts.xlsx"
 #===============================================================
 
 try:
-    settings_xl = pd.read_excel(SETTINGS_EXCEL_FILE, sheet_name = SETTINGS_EXCEL_FILE)
+    settings_xl = pd.read_excel(SETTINGS_EXCEL_FILE)
+    # settings_xl = pd.read_excel(SETTINGS_EXCEL_FILE, sheet_name = settings)
     # settings_xl['STUDY_GRADES'] = settings_xl['STUDY_GRADES'].fillna(DEFAULT_GRADES)
     # settings_xl['STUDY_GRADES'] = settings_xl['STUDY_GRADES'].apply(lambda x: [int(g) for g in str(x).split(',')])
     
@@ -158,58 +184,14 @@ NWEA’s numeric subject code:
 # Content areas and grades to include in study 
 # also alignmnet, section 3 for full test names.
 #=====================================================
-MAP_TEST_NAMES = [
-            'Growth: Math 2-5 CCSS 2010 1.1'
-            ,'Growth: Math 6+ CCSS 2010 1.1'
-            ,'Growth: Reading 2-5 CCSS 2010 1.1'
-            ,'Growth: Reading 6+ CCSS 2010 1.1'
-            ,'Growth: Science 2-5: for use with NGSS 2013 1.1'
-            ,'Growth: Science 6-8: for use with NGSS 2013 1.1'  
-    ]
-
-
-
-
-
-
-
-
-# TODO: ADJUST COMMON/PY_SQL QUERIES TO KEY OFF SETTINGS.XLSX - GRADES AND TESTNAMES
-# TODO: TRY SETTINGS.XSLX ALONG WITH WORKSHETTS IN COMMON/GIT
-
-
-#===============================================================
-# SETTINGS excel in root (data files)
-# change code to use this instead of settings on this page
-# new 11/18/2025 for GA2024 and going forward.
-# add race_pl_gender worksheets here
-#===============================================================
-
-# SETTINGS_EXCEL_FILE = os.path.join(DATA_ROOT, r'LS_data_prep_settings.xlsx')
-# SETTINGS_EXCEL_FILE = os.path.join(DATA_ROOT, r'Settings.xlsx')
-# settings_xl = pd.read_excel(SETTINGS_EXCEL_FILE, sheet_name = "settings")
-# settings_xl['STUDY_GRADES'] = settings_xl['STUDY_GRADES'].apply(lambda x: [int(g) for g in str(x).split(',')])
-
-
-
-
-#=============================================================
-# STANDARD INPUT/OUTPOUT LOCATIONS
-#=============================================================
-
-#SQL codepath - used in create map table. could drop.
-SQL_PATH = os.path.join(os.getcwd(), 'common','py_sql' )
-
-
-#create output folder for partnerdata
-datapath = os.path.join(DATA_ROOT, 'Working Files')
-
-# Create output directory if not exists-- taken from scratch_dev_code.py
-outPath = os.path.join(datapath ,'Output')
-if not os.path.exists(outPath):
-  
-    os.makedirs(outPath)
-    print("The Output directory was created: " + str(outPath))
+# MAP_TEST_NAMES = [
+#             'Growth: Math 2-5 CCSS 2010 1.1'
+#             ,'Growth: Math 6+ CCSS 2010 1.1'
+#             ,'Growth: Reading 2-5 CCSS 2010 1.1'
+#             ,'Growth: Reading 6+ CCSS 2010 1.1'
+#             ,'Growth: Science 2-5: for use with NGSS 2013 1.1'
+#             ,'Growth: Science 6-8: for use with NGSS 2013 1.1'  
+#     ]
 
 
 
@@ -226,75 +208,3 @@ if not os.path.exists(outPath):
 # o	Grades 11-12 are not included because the general science student achievement norms are for grades 2-10
 # o	EOC Biology to MAP Growth Science 9-12 Life Science/Biology, any applicable grades
 #-------------------------------------------------------------
-#TODO: this changed recently. for EOC see grade defaults by subject.
-DEFAULT_GRADES = '6,7,8,9,10,11,12' # IF GRADES LEFT EMPTY IN SETTINGS.
-
-
-
-#===================================================
-# GET SETTINGS.  set grade DEFAULT_GRADES IF empty.
-#===================================================
-  
-    
-    
-#=============================================================
-# RELIC SETTINGS 
-#=============================================================
-# RELIC FROM OLD SETTINGS NOT YET REMOVED:
-#-- THIS NEEDS TO BE IN FORM EG. 'ELA_SS' FOR NOW NOT 'ELA' AS IN SETTINGS.  
-# UNTIL CODE IN THIS SCRIPT CHANGEED TO HANDLE GRADEGRANGE SETTINGS.
-gradeRange = {          
-                'ELA_SS'    : [3,4,5,6,7,8] ,
-                'Math_SS'    : [3,4,5,6,7,8] ,
-                'Science_SS'    : [5,8]                
-                
-              }   
-
-SUBJECT_TO_MAP_TEST_MAPPING = {
-    'ELA': ['Growth: Reading 2-5 CCSS 2010 1.1'
-            ,'Growth: Reading 6+ CCSS 2010 1.1'],
-    'Math': ['Growth: Math 2-5 CCSS 2010 1.1'
-            ,'Growth: Math 6+ CCSS 2010 1.1'],
-    'Science': ['Growth: Science 2-5: for use with NGSS 2013 1.1'
-            ,'Growth: Science 6-8: for use with NGSS 2013 1.1']
-    
-    }
-
-
-#---------------------------------------
-# ADDING THIS FOR IL2025 TO GET IT DONE
-#---------------------------------------
-test_grade_map = {
-    "Growth: Reading 2-5 CCSS 2010 1.1": [ 3, 4, 5],
-    "Growth: Reading 6+ CCSS 2010 1.1": [6, 7, 8],
-    "Growth: Math 2-5 CCSS 2010 1.1": [ 3, 4, 5],
-    "Growth: Math 6+ CCSS 2010 1.1": [6, 7, 8],
-    "Growth: Science 2-5: for use with NGSS 2013 1.1": [ 5],
-    "Growth: Science 6-8: for use with NGSS 2013 1.1": [ 8],
-}
-
-# the subjects in gradeRAnge.
-subjects = list(gradeRange.keys()) #USED FOR SUBJECT COUNTS IN CREATE_DISTRICT_COMINED...
-SUBJECTNAMES = ['ELA','Math','Science']  #USED IN UPLOADE_COMBINED_FILE...
-
-#FIELDS ASSOCIATED WITH SCORES--NEEDED FOR PIVOT
-#TODO: USE STANDARD TEST NAMES AND CHECKE FOR, EX. 'ALGEBRA1_' as scorefield
-SCORE_FIELD_SUBSCRIPTS = ['TESTNAME','SS','PLDESC','PLCODE','TESTDATE','RETEST']
-
-
-# OUTPUT INFORMATION FOR PARTNER TABLE    
-# PARTNER DATA TABLE NAME IN SNOWFLAKE- eg. GA2025_STUDY_PARTNERDATA_
-partner_table_name = STATE_ABR + DATA_YEAR + '_LINKINGSTUDY_PARTNERDATA' 
-
-#True if output the partner combined file to snwoflake partner data table
-output_partnerdata_to_snowflake =  True   
-
-#SUBJECT CODE MAP-- temp til settings xl complete
-SUBJECT_CODE_MAP  = {
-    'ELA': 2,
-    'Math':1,
-    'Science':4
-    }
-
-
-    
