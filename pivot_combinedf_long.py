@@ -7,6 +7,15 @@ Created on Wed May 13 16:40:22 2026
 import re
 import pandas as pd
 from typing import List, Tuple
+import sys
+from pathlib import Path
+
+
+#spyder seems to get screwy with the wd sometimes
+ROOT = Path(__file__).resolve().parents[1]   # goes up from pycode → repo root
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+    
 from pycode.settings import COMBINED_FILE
 
 SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
@@ -105,12 +114,27 @@ def pivot_scores_long_no_impute(
 
     return long_df
 
+def _normalize_strings(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure ALL missing values are proper <NA>, not 'nan' strings.
+    """
+    df = df.copy()
+
+    # ✅ Step 1: convert numpy NaN → pandas NA
+    df = df.where(pd.notna(df), pd.NA)
+
+    # ✅ Step 2: convert blank/whitespace → NA
+    df = df.replace(r"^\s*$", pd.NA, regex=True)
+
+    # ✅ Step 3: convert everything to pandas string dtype
+    return df.astype("string")
 
 
 if "combinedDf" in globals() and isinstance(combinedDf, pd.DataFrame):
     df_wide = combinedDf
 else:
     df_wide = pd.read_excel(COMBINED_FILE, dtype=str, engine="openpyxl")
+    df_wide = _normalize_strings(df_wide)
 
 long_df = pivot_scores_long_no_impute(
     df_wide,

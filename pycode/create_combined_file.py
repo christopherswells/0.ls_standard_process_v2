@@ -8,6 +8,13 @@ from pathlib import Path
 import re
 import pandas as pd
 from typing import Optional
+import sys
+
+#spyder seems to get screwy with the wd sometimes
+ROOT = Path(__file__).resolve().parents[1]   # goes up from pycode → repo root
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+
 
 from pycode.settings import *  # expects WORKING_FILES, DATA_TEMPLATE, COMBINED_FILE
 
@@ -15,16 +22,40 @@ from pycode.settings import *  # expects WORKING_FILES, DATA_TEMPLATE, COMBINED_
 # -------------------------
 # Read helpers (Excel/CSV)
 # -------------------------
+
+
+def _normalize_strings(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure ALL missing values are proper <NA>, not 'nan' strings.
+    """
+    df = df.copy()
+
+    # ✅ Step 1: convert numpy NaN → pandas NA
+    df = df.where(pd.notna(df), pd.NA)
+
+    # ✅ Step 2: convert blank/whitespace → NA
+    df = df.replace(r"^\s*$", pd.NA, regex=True)
+
+    # ✅ Step 3: convert everything to pandas string dtype
+    return df.astype("string")
+
+
 def read_as_excel(path: Path) -> pd.DataFrame:
-    return pd.read_excel(path, dtype=str, sheet_name=0, engine="openpyxl")
+    # Read without forcing dtype; then normalize
+    df = pd.read_excel(path, sheet_name=0, engine="openpyxl")
+    return _normalize_strings(df)
 
 def read_as_csv(path: Path) -> pd.DataFrame:
+    # Read without forcing dtype; then normalize
     for enc in ("utf-8-sig", "utf-8", "cp1252"):
         try:
-            return pd.read_csv(path, dtype=str, encoding=enc)
+            df = pd.read_csv(path, encoding=enc)
+            return _normalize_strings(df)
         except UnicodeDecodeError:
             continue
-    return pd.read_csv(path, dtype=str, encoding_errors="replace")
+    df = pd.read_csv(path, encoding_errors="replace")
+    return _normalize_strings(df)
+
 
 def read_any_file_loose(path: Path) -> pd.DataFrame:
     """
