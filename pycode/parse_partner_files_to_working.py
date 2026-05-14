@@ -238,6 +238,55 @@ def append_log_row_if_missing(
     }
     return pd.concat([log_df, pd.DataFrame([new_row])], ignore_index=True)
 
+def upsert_log_status_only(
+    log_df: pd.DataFrame,
+    filename: str,
+    date_ingested: str,
+    non_blank_records=pd.NA,
+    status=pd.NA,
+    notes=pd.NA,
+    notes2=pd.NA
+) -> pd.DataFrame:
+    """
+    If filename not in log -> append new row.
+    If filename already in log -> update STATUS always,
+      and fill other fields only if they are currently missing.
+    Never overwrite date_ingested if already present.
+    """
+    mask = log_df["original_file"].astype("string").fillna("").str.lower() == filename.lower()
+
+    if not mask.any():
+        return append_log_row_if_missing(
+            log_df,
+            original_filename=filename,
+            date_ingested=date_ingested,
+            non_blank_records=non_blank_records,
+            status=status,
+            notes=notes,
+            notes2=notes2
+        )
+
+    idx = log_df.index[mask][0]
+
+    # Always update STATUS for this filename
+    log_df.loc[idx, "STATUS"] = status
+
+    # Fill only if missing
+    if pd.isna(log_df.loc[idx, "non_blank_records"]) and not pd.isna(non_blank_records):
+        log_df.loc[idx, "non_blank_records"] = non_blank_records
+
+    if pd.isna(log_df.loc[idx, "notes"]) and not pd.isna(notes):
+        log_df.loc[idx, "notes"] = notes
+
+    if pd.isna(log_df.loc[idx, "notes2"]) and not pd.isna(notes2):
+        log_df.loc[idx, "notes2"] = notes2
+
+    # Do NOT overwrite date_ingested; only fill if missing
+    if pd.isna(log_df.loc[idx, "date_ingested"]) and not pd.isna(date_ingested):
+        log_df.loc[idx, "date_ingested"] = date_ingested
+
+    return log_df
+
 
 def update_log_status_to_edited(log_df: pd.DataFrame, original_filename: str) -> pd.DataFrame:
     """
@@ -486,16 +535,25 @@ def process_original_files(template_cols: int, log_df: pd.DataFrame) -> pd.DataF
 
     return log_df
 
+
 def process_edited_files_in_rejected(template_cols: int, log_df: pd.DataFrame) -> pd.DataFrame:
     """
-    NEW UPDATE:
-    - Any file in REJECTED_FILES starting with edited_ is logged as a NEW entry (edited filename).
-    - If readable and cols match template: copy to WORKING (keep edited_ prefix) + STATUS=EDITED_WORKING
-    - If readable and cols mismatch: keep in REJECTED + STATUS=EDITED_REJECTED + notes=expected/received
-    - If unreadable: log only original_file + date_ingested; leave rest missing
-    - Do not overwrite existing log rows for the edited filename.
+    REQUIRED behavior:
+    - Leave rejected files in REJECTED_FILES and in the log.
+    - If a file in REJECTED_FILES starts with edited_:
+        - Log it as its own entry (edited filename).
+        - If readable and cols match template:
+            - COPY it into WORKING_FILES as a new file (keep edited_ prefix)
+            - Keep the edited file in REJECTED_FILES too
+            - STATUS = EDITED_WORKING
+        - If readable and cols mismatch:
+            - Leave it in REJECTED_FILES
+            - STATUS = EDITED_REJECTED
+            - notes = expected/received
+        - If unreadable:
+            - Log filename + date only; leave rest missing
+    - If the edited_ filename already exists in the log, update its STATUS (don’t overwrite date_ingested).
     """
-    working_existing = list_filenames_lower(WORKING_FILES)
     today_str = date.today().isoformat()
 
     candidates = sorted([
@@ -504,61 +562,51 @@ def process_edited_files_in_rejected(template_cols: int, log_df: pd.DataFrame) -
     ])
 
     for src in candidates:
-        # Do not overwrite existing log entry for this edited file
-        if log_has_file(log_df, src.name):
-            continue
-
-        # Defaults (guarantee defined)
+        # Defaults
         non_blank = pd.NA
         status = pd.NA
         notes = pd.NA
 
-        # Try to read as Excel or CSV regardless of extension
+        # Try to read as Excel/CSV regardless of extension
         try:
             df = read_any_file_loose(src)
-        except Exception:
-            # Unreadable: log only filename + date, rest missing
-            log_df = append_log_row_if_missing(
+        except Exception as e:
+            print(f"LOG ONLY (edited_ unreadable as excel/csv): {src.name} -> {e}")
+            log_df = upsert_log_status_only(
                 log_df,
-                original_filename=src.name,     # log entry is the edited filename
+                filename=src.name,
                 date_ingested=today_str,
                 non_blank_records=pd.NA,
                 status=pd.NA,
                 notes=pd.NA,
                 notes2=pd.NA
             )
-            print(f"LOG ONLY (edited_ unreadable as excel/csv): {src.name}")
             continue
 
-        # Readable: compute metrics
         received_cols = int(df.shape[1])
         non_blank = count_nonblank_records(df)
 
         if received_cols == template_cols:
-            # Promote to WORKING (keep edited_ prefix)
+            # COPY into WORKING (keep edited_ prefix). Do NOT remove from REJECTED.
             out_path = WORKING_FILES / src.name
 
-            # If file already exists in WORKING, do not recopy; still log as EDITED_WORKING
-            if src.name.lower() not in working_existing:
-                df2 = add_required_columns(df, src.name)
-                written_to = write_any_file(df2, out_path)
-                print(f"EDITED -> WORKING: {src.name} -> {written_to.name}")
-            else:
-                print(f"EDITED already in WORKING (log only): {src.name}")
+            # Write as a pandas-produced file with your standard added columns
+            df2 = add_required_columns(df, src.name)
+            written_to = write_any_file(df2, out_path)
+            print(f"EDITED -> WORKING (copied, rejected retained): {src.name} -> {written_to.name}")
 
             status = "EDITED_WORKING"
-            notes = pd.NA  # only record received cols when mismatch
+            notes = pd.NA  # only record cols in notes when mismatch
 
         else:
-            # Still wrong: remain in REJECTED, log mismatch
             status = "EDITED_REJECTED"
             notes = f"expected_cols={template_cols}; received_cols={received_cols}"
-            print(f"EDITED stays REJECTED (col mismatch {received_cols} != {template_cols}): {src.name}")
+            print(f"EDITED remains REJECTED (col mismatch {received_cols} != {template_cols}): {src.name}")
 
-        # Log this edited_ file as a NEW entry
-        log_df = append_log_row_if_missing(
+        # Log as its own entry (edited filename). Update STATUS if already logged.
+        log_df = upsert_log_status_only(
             log_df,
-            original_filename=src.name,
+            filename=src.name,
             date_ingested=today_str,
             non_blank_records=non_blank,
             status=status,
@@ -567,6 +615,8 @@ def process_edited_files_in_rejected(template_cols: int, log_df: pd.DataFrame) -
         )
 
     return log_df
+
+
 
 
 if __name__ == "__main__":
