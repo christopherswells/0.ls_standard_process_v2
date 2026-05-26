@@ -510,17 +510,23 @@ def process_original_files(template_cols: int, log_df: pd.DataFrame) -> pd.DataF
             print(f"LOG (already in REJECTED): {src.name}")
             continue
 
+       
         # not present: route
         if received_cols == template_cols:
             out_path = WORKING_FILES / src.name
-            df2 = add_required_columns(df, src.name)
-            written_to = write_any_file(df2, out_path)
-            status = "WORKING_FILES"
-            print(f"WORKING: {src.name} -> {written_to.name}")
+        
+            if out_path.exists():
+                status = "WORKING_FILES"
+                print(f"SKIP WRITE (already in WORKING): {src.name}")
+            else:
+                df2 = add_required_columns(df, src.name)
+                written_to = write_any_file(df2, out_path)
+                status = "WORKING_FILES"
+                print(f"WORKING: {src.name} -> {written_to.name}")
         else:
             shutil.copy2(src, REJECTED_FILES / src.name)
             status = "REJECTED_FILES"
-            print(f"REJECT (col mismatch {received_cols} != {template_cols}): {src.name}")
+
 
         # log final outcome (variables are guaranteed defined)
         log_df = append_log_row_if_missing(
