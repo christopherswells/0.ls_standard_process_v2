@@ -33,10 +33,24 @@ SCHEMA = 'LINKING_STUDIES'
 #================================================================
 #  STUDY SETTINGS FROM PLANNING FORM IN SHAREPOIONT
 #================================================================
+# TERM_NUMBER = '202502'      # TERM OF DATA
+# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+# STATE_NAME = 'ILLINOIS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+# STATE_ABR = 'IL'
+# DATA_YEAR = TERM_NUMBER[:4] 
+
+# ------ OK2026 ---------
+# TERM_NUMBER = '202502'      # TERM OF DATA
+# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+# STATE_NAME = 'OKLAHOMA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+# STATE_ABR = 'OK'
+# DATA_YEAR = TERM_NUMBER[:4] 
+
+# ------ PA2026 ---------
 TERM_NUMBER = '202502'      # TERM OF DATA
 STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-STATE_NAME = 'ILLINOIS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-STATE_ABR = 'IL'
+STATE_NAME = 'PENNSYLVANIA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+STATE_ABR = 'PA'
 DATA_YEAR = TERM_NUMBER[:4] 
 
 
@@ -48,11 +62,11 @@ SDRIVE = r'S:\MAPGrowth\Linking\Data Files\\'
 
 
 # STANDARD LOCATION IN S:\\{STUDY_YEAR}\{ST}
-# DATA_ROOT = os.path.join(SDRIVE, STUDY_YEAR, STATE_ABR)
+DATA_ROOT = os.path.join(SDRIVE, STUDY_YEAR, STATE_ABR)
 
 
 # IF NON-STANDARD DATA LOCATION
-DATA_ROOT = r'S:\MAPGrowth\Linking\Data Files\2026\IL_v2'
+# DATA_ROOT = r'S:\MAPGrowth\Linking\Data Files\2026\IL_v2'
 
 
 #---------------------------------------------------------------
@@ -155,7 +169,12 @@ except:
 # SUBJECT NUMBERS FOR MAP GROWTH TESTS
 #=====================================================
 # SUBJECTS = [1, 2, 4, 100, 101, 102, 108]  #SC 2025
+# MAP_SUBJECT_CODES = [1,2,4] #IL
 MAP_SUBJECT_CODES = [1,2,4]
+
+# HOW TO HANDLE CHANGES?
+SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
+
 
 '''
 NWEA’s numeric subject code:

@@ -172,14 +172,14 @@ def combine_working_files_using_template(
         # Add required columns
         df["filenameFromDistrict"] = f.name
         code = extract_agency_code(f.name)
-        df["agency_code"] = pd.Series(code, index=df.index, dtype="string")  # <NA> if None
+        df["agencycode"] = pd.Series(code, index=df.index, dtype="string")  # <NA> if None
 
         dfs.append(df)
         print(f"[OK]  {f.name}  rows={len(df):,} cols={df.shape[1]}")
 
     # If nothing readable, still create the file with headers
     if not dfs:
-        empty = pd.DataFrame(columns=template_cols + ["filenameFromDistrict", "agency_code"])
+        empty = pd.DataFrame(columns=template_cols + ["filenameFromDistrict", "agencycode"])
         with pd.ExcelWriter(combined_file, engine="openpyxl") as writer:
             empty.to_excel(writer, index=False, sheet_name=sheet_name)
         print(f"[DONE] No valid working files. Wrote empty combined workbook: {combined_file}")
@@ -188,7 +188,7 @@ def combine_working_files_using_template(
     combined_df = pd.concat(dfs, ignore_index=True, sort=False)
 
     # Order columns: template first, then the two added columns
-    out_cols = template_cols + ["filenameFromDistrict", "agency_code"]
+    out_cols = template_cols + ["filenameFromDistrict", "agencycode"]
     combined_df = combined_df[out_cols]
 
     # Write output
