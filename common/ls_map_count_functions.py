@@ -28,6 +28,9 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy import text
+from datetime import datetime
+from pathlib import Path
+
 
 def establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = '', SCHEMA = ''):
 # Replace the placeholders with your Snowflake account details
@@ -207,6 +210,41 @@ def output_to_excel_tab(outputDict, outpath):
     print('output ' + sheet_name +' to : ' + outpath)
     
 
+
+
+def add_timestamp_to_filename(
+    base_filename: str,
+    outdir: str,
+    timestamp_fmt: str = "%Y%m%d_%H%M%S"
+) -> str:
+    """
+    Append a timestamp to a filename before the extension.
+
+    Example:
+        output_partner_counts.xlsx
+        -> output_partner_counts_20260609_141233.xlsx
+    """
+    name, ext = os.path.splitext(base_filename)
+    timestamp = datetime.now().strftime(timestamp_fmt)
+    return os.path.join(outdir, f"{name}_{timestamp}{ext}")
+    
+
+
+def add_timestamp_to_path(
+    outpath: Path,
+    timestamp_fmt: str = "%Y%m%d_%H%M%S"
+) -> Path:
+    """
+    Insert a timestamp before the file extension of a Path.
+
+    Example:
+      VA2025_partner_counts.xlsx
+      -> VA2025_partner_counts_20260609_142015.xlsx
+    """
+    timestamp = datetime.now().strftime(timestamp_fmt)
+    return outpath.with_name(
+        f"{outpath.stem}_{timestamp}{outpath.suffix}"
+    )
     
     
     

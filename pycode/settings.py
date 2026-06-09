@@ -16,6 +16,9 @@ import sys
 
 from pathlib import Path  #TODO: SWITCH PATHS TO THIS
 
+from common.ls_map_count_functions import output_to_excel_tab
+from common.ls_map_count_functions import add_timestamp_to_path
+
 
 #=====================================================
 # SNOWFLAKE CONNECTION SETTINGS
@@ -47,11 +50,11 @@ SCHEMA = 'LINKING_STUDIES'
 # DATA_YEAR = TERM_NUMBER[:4] 
 
 # ------ PA2026 ---------
-TERM_NUMBER = '202502'      # TERM OF DATA
-STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-STATE_NAME = 'PENNSYLVANIA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-STATE_ABR = 'PA'
-DATA_YEAR = TERM_NUMBER[:4] 
+# TERM_NUMBER = '202502'      # TERM OF DATA
+# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+# STATE_NAME = 'PENNSYLVANIA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+# STATE_ABR = 'PA'
+# DATA_YEAR = TERM_NUMBER[:4] 
 
 
 #===============================================================
@@ -142,6 +145,9 @@ SETTINGS_EXCEL_FILE = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_data_prep_settings.xl
 OUT_MAP_COUNTS = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_map_counts.xlsx"
 
 OUT_PARTNER_COUNTS = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_partner_counts.xlsx"
+
+#adds timestamp to partner counts
+OUT_PARTNER_COUNTS_TS = add_timestamp_to_path(OUT_PARTNER_COUNTS)
 
 DATA_LOG = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_district_data_log.xlsx"
 
