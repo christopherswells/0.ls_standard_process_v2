@@ -8,6 +8,9 @@ Created on Tue Jun  9 14:09:02 2026
 import pandas as pd
 import numpy as np
 from typing import List, Optional
+from pycode.settings import *
+
+df_wide = pd.read_parquet(DATA_ROOT / "df_wide.parquet")
 
 def missingness_long(
     df: pd.DataFrame,
@@ -79,6 +82,18 @@ missing_by_grade_and_file = missingness_long(
 missing_by_file_only = missingness_long(
     df=df_wide,
     group_cols=["filenameFromDistrict"]
+)
+
+
+output_dict = {
+    "missing_by_file_only": missing_by_file_only,
+    "missing_by_grade_and_file": missing_by_grade_and_file,
+}
+
+
+output_to_excel_tab(
+    outputDict=output_dict,
+    outpath=str(OUT_PARTNER_COUNTS_TS)
 )
 
 
