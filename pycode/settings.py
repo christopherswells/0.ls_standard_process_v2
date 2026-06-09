@@ -101,7 +101,7 @@ def make_versioned_dir(base_path: Path) -> Path:
 
 
 OUTPUT = DATA_ROOT / "output"
-OUTPUT = make_versioned_dir(OUTPUT)
+# OUTPUT = make_versioned_dir(OUTPUT)
 
 
 # if OUTPUT.exists():
