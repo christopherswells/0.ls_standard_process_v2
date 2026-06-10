@@ -50,12 +50,19 @@ SCHEMA = 'LINKING_STUDIES'
 # DATA_YEAR = TERM_NUMBER[:4] 
 
 # ------ PA2026 ---------
+TERM_NUMBER = '202502'      # TERM OF DATA
+STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+STATE_NAME = 'PENNSYLVANIA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+STATE_ABR = 'PA'
+DATA_YEAR = TERM_NUMBER[:4] 
+
+
+# ------ WI2025 ---------
 # TERM_NUMBER = '202502'      # TERM OF DATA
 # STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-# STATE_NAME = 'PENNSYLVANIA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-# STATE_ABR = 'PA'
+# STATE_NAME = 'WISCONSIN' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+# STATE_ABR = 'WI'
 # DATA_YEAR = TERM_NUMBER[:4] 
-
 
 #===============================================================
 # INPUT/OUTPUT LOCATIONS
@@ -176,7 +183,7 @@ except:
 #=====================================================
 # SUBJECTS = [1, 2, 4, 100, 101, 102, 108]  #SC 2025
 # MAP_SUBJECT_CODES = [1,2,4] #IL
-MAP_SUBJECT_CODES = [1,2,4]
+MAP_SUBJECT_CODES = [1,2]
 
 # HOW TO HANDLE CHANGES?
 SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
