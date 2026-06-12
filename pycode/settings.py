@@ -36,11 +36,11 @@ SCHEMA = 'LINKING_STUDIES'
 #================================================================
 #  STUDY SETTINGS FROM PLANNING FORM IN SHAREPOIONT
 #================================================================
-TERM_NUMBER = '202502'      # TERM OF DATA
-STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-STATE_NAME = 'ILLINOIS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-STATE_ABR = 'IL'
-DATA_YEAR = TERM_NUMBER[:4] 
+# TERM_NUMBER = '202502'      # TERM OF DATA
+# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+# STATE_NAME = 'ILLINOIS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+# STATE_ABR = 'IL'
+# DATA_YEAR = TERM_NUMBER[:4] 
 
 # ------ OK2026 ---------
 # TERM_NUMBER = '202502'      # TERM OF DATA
@@ -64,19 +64,32 @@ DATA_YEAR = TERM_NUMBER[:4]
 # STATE_ABR = 'WI'
 # DATA_YEAR = TERM_NUMBER[:4] 
 
+
+# ------ TX2026 ---------
+TERM_NUMBER = '202602'      # TERM OF DATA
+STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+STATE_NAME = 'TEXAS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+STATE_ABR = 'TX'
+DATA_YEAR = TERM_NUMBER[:4] 
+
+
+
+map_subject_codes = [1, 2, 4, 100, 101, 102, 108]  # for initial MAP counts
+
+
 #===============================================================
 # INPUT/OUTPUT LOCATIONS
-# ==============================================================
+#==============================================================
 
 SDRIVE = r'S:\MAPGrowth\Linking\Data Files\\'
 
 
 # STANDARD LOCATION IN S:\\{STUDY_YEAR}\{ST}
-# DATA_ROOT = os.path.join(SDRIVE, STUDY_YEAR, STATE_ABR)
+DATA_ROOT = os.path.join(SDRIVE, STUDY_YEAR, STATE_ABR)
 
 
 # IF NON-STANDARD DATA LOCATION
-DATA_ROOT = r'S:\MAPGrowth\Linking\Data Files\2026\IL_v2'
+# DATA_ROOT = r'S:\MAPGrowth\Linking\Data Files\2026\IL_v2'    # for IL USING V2 CODE
 
 
 #---------------------------------------------------------------
@@ -86,7 +99,7 @@ DATA_ROOT = Path(DATA_ROOT)
 
 ORIGINAL_FILES = DATA_ROOT / "original_files"
 REJECTED_FILES = DATA_ROOT / "rejected_files"
-EDITED_FILES = DATA_ROOT / "edited_files"
+EDITED_FILES = DATA_ROOT  / "edited_files"
 WORKING_FILES = DATA_ROOT / "working_files"
 
 
@@ -94,6 +107,8 @@ for folder in [ORIGINAL_FILES, REJECTED_FILES, EDITED_FILES, WORKING_FILES]:
     folder.mkdir(parents=True, exist_ok=True)
 
 
+#full output path + filename
+OUTMAPCOUNTS = os.path.join(DATA_ROOT , STATE_ABR + DATA_YEAR +'_mapcounts.xlsx' )
 
 #------------------------------------------------------------------
 # OUTPUT-- 
@@ -165,25 +180,62 @@ COMBINED_FILE = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_combined_file.xlsx"
 # SETTINGS-- GLOBAL VARIABLES TO RUN STUDY SCRIPTS
 #===============================================================
 
+settings_xl = None
+
 try:
     settings_xl = pd.read_excel(SETTINGS_EXCEL_FILE)
-    # settings_xl = pd.read_excel(SETTINGS_EXCEL_FILE, sheet_name = settings)
-    # settings_xl['STUDY_GRADES'] = settings_xl['STUDY_GRADES'].fillna(DEFAULT_GRADES)
-    # settings_xl['STUDY_GRADES'] = settings_xl['STUDY_GRADES'].apply(lambda x: [int(g) for g in str(x).split(',')])
-    
+   
 except:
     print()
-    print('DOES THE SETTINGS.PY FILE IN THE ROOT HAVE A SETTINGS TAB?')
+    print('Is there a settings file here with settings tab?:')
     print(DATA_ROOT)
     
 
 
-#=====================================================
-# SUBJECT NUMBERS FOR MAP GROWTH TESTS
-#=====================================================
+#===============================================================
+# BUILD TESTNAME → GRADE LIST MAPPING
+#===============================================================
+
+
+if settings_xl is not None and not settings_xl.empty:
+    df = settings_xl.copy()
+    df.columns = df.columns.str.strip()
+
+    if 'D_MAPGROWTH_TEST_NAME' in df.columns and 'STUDY_GRADES' in df.columns:
+        # Normalize grades into list[int]
+        def parse_grades(x):
+            if pd.isna(x):
+                return []
+            return [int(g.strip()) for g in str(x).split(',') if g.strip()]
+
+        df['STUDY_GRADES_LIST'] = df['STUDY_GRADES'].apply(parse_grades)
+
+        # explode → group → collect unique grades per test
+        exploded = df[['D_MAPGROWTH_TEST_NAME', 'STUDY_GRADES_LIST']].explode('STUDY_GRADES_LIST')
+
+        map_test_grades = (
+            exploded
+            .dropna(subset=['STUDY_GRADES_LIST'])
+            .groupby('D_MAPGROWTH_TEST_NAME')['STUDY_GRADES_LIST']
+            .apply(lambda x: sorted(set(int(v) for v in x)))
+            .to_dict()
+        )
+        
+        #map tests in study        
+        map_test_names  =  [k.strip() for k in map_test_grades.keys()]
+        
+        
+
+#========================================================
+# SUBJECT NUMBERS FOR MAP Counts if settings.py not exist
+# sometimes initial map counts prior to knowing
+# all exact testnames and/or grades, etc.  can use
+# just subject codes to explore.
+#========================================================
 # SUBJECTS = [1, 2, 4, 100, 101, 102, 108]  #SC 2025
 # MAP_SUBJECT_CODES = [1,2,4] #IL
-MAP_SUBJECT_CODES = [1,2]
+
+   
 
 # HOW TO HANDLE CHANGES?
 SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
