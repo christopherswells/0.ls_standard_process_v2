@@ -1,0 +1,15 @@
+
+# Python
+__pycache__/
+*.pyc
+
+# Spyder
+.spyproject/
+
+# Excel outputs
+*.xlsx
+
+# Temp / staging dirs
+pycode/V1/
+documentation/
+sql/
