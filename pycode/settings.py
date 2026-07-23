@@ -36,6 +36,8 @@ SCHEMA = 'LINKING_STUDIES'
 #================================================================
 #  STUDY SETTINGS FROM PLANNING FORM IN SHAREPOIONT
 #================================================================
+
+#-------------IL2025------
 # TERM_NUMBER = '202502'      # TERM OF DATA
 # STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
 # STATE_NAME = 'ILLINOIS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
@@ -43,11 +45,14 @@ SCHEMA = 'LINKING_STUDIES'
 # DATA_YEAR = TERM_NUMBER[:4] 
 
 # ------ OK2026 ---------
-# TERM_NUMBER = '202502'      # TERM OF DATA
-# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-# STATE_NAME = 'OKLAHOMA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-# STATE_ABR = 'OK'
-# DATA_YEAR = TERM_NUMBER[:4] 
+TERM_NUMBER = '202502'      # TERM OF DATA
+STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+STATE_NAME = 'OKLAHOMA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+STATE_ABR = 'OK'
+DATA_YEAR = TERM_NUMBER[:4] 
+
+SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE"
+            ,"SS_CONVERTED","SS_UNCONVERTED"]
 
 # ------ PA2026 ---------
 # TERM_NUMBER = '202502'      # TERM OF DATA
@@ -56,13 +61,15 @@ SCHEMA = 'LINKING_STUDIES'
 # STATE_ABR = 'PA'
 # DATA_YEAR = TERM_NUMBER[:4] 
 
+# map_subject_codes = [1, 2, 100]  # for initial MAP counts
+
 
 # ------ WI2025 ---------
-TERM_NUMBER = '202502'      # TERM OF DATA
-STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-STATE_NAME = 'WISCONSIN' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-STATE_ABR = 'WI'
-DATA_YEAR = TERM_NUMBER[:4] 
+# TERM_NUMBER = '202502'      # TERM OF DATA
+# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+# STATE_NAME = 'WISCONSIN' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+# STATE_ABR = 'WI'
+# DATA_YEAR = TERM_NUMBER[:4] 
 
 
 # ------ TX2026 ---------
@@ -71,6 +78,7 @@ DATA_YEAR = TERM_NUMBER[:4]
 # STATE_NAME = 'TEXAS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
 # STATE_ABR = 'TX'
 # DATA_YEAR = TERM_NUMBER[:4] 
+
 
 #------ COLORADO-------
 # TERM_NUMBER = '202602'      # TERM OF DATA
@@ -89,7 +97,7 @@ DATA_YEAR = TERM_NUMBER[:4]
 
 
 #tx
-map_subject_codes = [1, 2, 4]  # for initial MAP counts
+
 
 #initialize
 map_test_names = []
@@ -258,8 +266,8 @@ if settings_xl is not None and not settings_xl.empty:
 
    
 
-# HOW TO HANDLE CHANGES?
-SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
+# HOW TO HANDLE CHANGES?-- putting up top for OK2025
+# SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 
 
 '''
