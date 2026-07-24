@@ -29,6 +29,7 @@ from pycode.settings import *
 
 
 
+
 #-----------------------------------------------------   
 # ADD PARTNER DATA TO TEMP SNOWFLAKE TABLE
 #-----------------------------------------------------
@@ -40,19 +41,19 @@ else:
     df_long = pd.read_parquet(Path(DATA_ROOT) / "df_long.parquet")
     
     
-CONN = establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
+# CONN = establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
   
-success, nchunks, nrows, _ = write_pandas(
-    CONN,
-    df_long,
-    table_name= partner_table_name,
-    quote_identifiers=True,
-    overwrite=True, #if False appends data
-    auto_create_table=True
-)
+# success, nchunks, nrows, _ = write_pandas(
+#     CONN,
+#     df_long,
+#     table_name= partner_table_name,
+#     quote_identifiers=True,
+#     overwrite=True, #if False appends data
+#     auto_create_table=True
+# )
 
-CONN.commit()
-CONN.close()
+# CONN.commit()
+# CONN.close()
 
 
 
@@ -60,23 +61,23 @@ CONN.close()
 # ADD combined_file DATA TO TEMP SNOWFLAKE TABLE
 #-----------------------------------------------------
 
-# IMPORT DF_LONG IF NOT ALREADY LOADED
+# # IMPORT DF_LONG IF NOT ALREADY LOADED
 if "df_wide" in globals() and isinstance(df_wide, pd.DataFrame):
     pass
 else:
     df_wide = pd.read_parquet(Path(DATA_ROOT) / "df_wide.parquet")
     
     
-CONN = establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
+# CONN = establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
   
-success, nchunks, nrows, _ = write_pandas(
-    CONN,
-    df_wide,
-    table_name= combined_file_table_name,
-    quote_identifiers=True,
-    overwrite=True, #if False appends data
-    auto_create_table=True
-)
+# success, nchunks, nrows, _ = write_pandas(
+#     CONN,
+#     df_wide,
+#     table_name= combined_file_table_name,
+#     quote_identifiers=True,
+#     overwrite=True, #if False appends data
+#     auto_create_table=True
+# )
 
-CONN.commit()
-CONN.close()
+# CONN.commit()
+# CONN.close()
