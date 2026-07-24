@@ -131,6 +131,27 @@ def _normalize_strings(df: pd.DataFrame) -> pd.DataFrame:
     return df.astype("string")
 
 
+def rename_columns_upper_with_prefix(
+    df: pd.DataFrame,
+    prefix: str = "D_"
+) -> pd.DataFrame:
+    """
+    Convert all column names to uppercase and prepend a prefix.
+
+    Example:
+        studentid  -> D_STUDENTID
+        agencycode -> D_AGENCYCODE
+    """
+    df = df.copy()
+    df.columns = [
+        f"{prefix}{str(col).strip().upper()}"
+        for col in df.columns
+    ]
+    return df
+
+
+
+
 
 '''
     use wide dataframe 'combinedDF' if exists, else read in combinedDF
@@ -148,7 +169,7 @@ df_long = pivot_scores_long_no_impute(
     drop_rows_all_scores_missing=True    # usually what you want
 )
 
-df_long.shape
+df_long = rename_columns_upper_with_prefix(df_long)
 
 
 df_wide.to_parquet(DATA_ROOT / "df_wide.parquet", index=False)
