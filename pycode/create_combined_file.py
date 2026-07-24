@@ -190,8 +190,10 @@ def combine_working_files_using_template(
     # Order columns: template first, then the two added columns
     out_cols = template_cols + ["filenameFromDistrict", "agencycode"]
     combined_df = combined_df[out_cols]
+    
+          
 
-    # Write output
+    # Write excel output
     with pd.ExcelWriter(combined_file, engine="openpyxl") as writer:
         combined_df.to_excel(writer, index=False, sheet_name=sheet_name, na_rep="")
 

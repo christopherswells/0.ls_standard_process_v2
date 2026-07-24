@@ -113,9 +113,17 @@ SDRIVE = r'S:\MAPGrowth\Linking\Data Files\\'
 # STANDARD LOCATION IN S:\\{STUDY_YEAR}\{ST}
 DATA_ROOT = os.path.join(SDRIVE, STUDY_YEAR, STATE_ABR)
 
-
 # IF NON-STANDARD DATA LOCATION
 # DATA_ROOT = r'S:\MAPGrowth\Linking\Data Files\2026\TX\spanish'    # for IL USING V2 CODE
+
+# PARTNER DATA RAW TO SNOWFLAKE LINKING STUDIES SCHEMA
+combined_file_table_name = ( f"{STATE_ABR}{STUDY_YEAR}_COMBINED_FILE").upper()
+combined_file_stage_table_name = (f"{combined_file_table_name}_STAGE")
+
+# PARTNER DATA FILE LONG
+partner_table_name = ( f"{STATE_ABR}{STUDY_YEAR}_PARTNERDATA").upper()
+
+combined_file_table_name = ( f"{STATE_ABR}{STUDY_YEAR}_COMBINED_FILE").upper()
 
 
 # PRINT THE DATA ROOT
