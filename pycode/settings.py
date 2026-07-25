@@ -124,10 +124,6 @@ DATA_ROOT = os.path.join(SDRIVE, STUDY_YEAR, STATE_ABR)
 combined_file_table_name = ( f"{STATE_ABR}{STUDY_YEAR}_COMBINED_FILE").upper()
 combined_file_stage_table_name = (f"{combined_file_table_name}_STAGE")
 
-# PARTNER DATA FILE LONG
-partner_table_name = ( f"{STATE_ABR}{STUDY_YEAR}_PARTNERDATA").upper()
-
-combined_file_table_name = ( f"{STATE_ABR}{STUDY_YEAR}_COMBINED_FILE").upper()
 
 
 # PRINT THE DATA ROOT
@@ -215,6 +211,13 @@ OUT_PARTNER_COUNTS_TS = add_timestamp_to_path(OUT_PARTNER_COUNTS)
 DATA_LOG = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_district_data_log.xlsx"
 
 COMBINED_FILE = DATA_ROOT / f"{STATE_ABR}{DATA_YEAR}_combined_file.xlsx"
+
+
+#TABLES -- SHOULD THESE BE STUDY OR DATA YEAR?
+partner_table_name = ( f"{STATE_ABR}{DATA_YEAR}_PARTNERDATA").upper()
+
+combined_file_table_name = ( f"{STATE_ABR}{DATA_YEAR}_COMBINED_FILE").upper()
+
 
 
 #===============================================================

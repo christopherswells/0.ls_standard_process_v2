@@ -41,19 +41,19 @@ else:
     df_long = pd.read_parquet(Path(DATA_ROOT) / "df_long.parquet")
     
     
-# CONN = establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
+CONN = establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
   
-# success, nchunks, nrows, _ = write_pandas(
-#     CONN,
-#     df_long,
-#     table_name= partner_table_name,
-#     quote_identifiers=True,
-#     overwrite=True, #if False appends data
-#     auto_create_table=True
-# )
+success, nchunks, nrows, _ = write_pandas(
+    CONN,
+    df_long,
+    table_name= partner_table_name,
+    quote_identifiers=True,
+    overwrite=True, #if False appends data
+    auto_create_table=True
+)
 
-# CONN.commit()
-# CONN.close()
+CONN.commit()
+CONN.close()
 
 
 
