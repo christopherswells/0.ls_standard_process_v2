@@ -1,0 +1,28 @@
+run order:
+settings.py
+parse_partner_files_to_working.py -- checks structure
+create_combined_file.py -- creates combined file in excel
+pivot_combineddf_long.py -- pivots to long and saves both long and wide as parquet
+
+
+
+
+
+
+MAP DATA
+ * query from tables in sql
+ * query from python using form fill-- better.  use settings table to select gradde, etc. for each test
+ * 
+ 
+ partner data
+ * add _clean for each columns
+ * original cols as text
+ * new cols to match map growth and/or output
+ * make fields Int64 or Date, etc.
+ 
+ Settings_xl added to snowflake
+ 
+ MERGE
+ 
+ MERGE COUNTS
+ 
