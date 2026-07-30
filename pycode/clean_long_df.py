@@ -235,6 +235,7 @@ def add_clean_grade_column(df: pd.DataFrame, col: str) -> pd.DataFrame:
 df_long, cleaned = add_clean_grade_column(df_long, "D_GRADE")
 
 
+
 #==============================================================
 # PLACE *_CLEAN COLUMNS NEXT TO ORIGINALS
 #==============================================================
@@ -307,11 +308,11 @@ settings_prefixed["SETTINGS_GRADE_LIST"] = (
 #     how="left"
 # )
 
-# MERGE ONLY ON STATE
+# MERGE ONLY ON Subject
 merged = df_long.merge(
     settings_prefixed,
-    left_on=["D_SUBJECT", "D_STATE"],
-    right_on=["SETTINGS_D_SUBJECT", "SETTINGS_STATE"],
+    left_on=["D_SUBJECT"],
+    right_on=["SETTINGS_D_SUBJECT"],
     how="left"
 )
 
@@ -336,17 +337,19 @@ merged_valid["SETTINGS_STUDY_GRADES"] = (
 # KEEP MERGED INVALID FOR QA
 
 # rows that did NOT pass the grade filter
-merged_invalid = merged[~merged["GRADE_ALLOWED"]].copy()
+keep_cols = [
+    'D_DISTRICTNAME',
+    'D_SCHOOLNAME',
+    'D_SUBJECT',
+    'D_GRADE',
+    'D_GRADE_CLEAN',
+    'SETTINGS_STUDY_GRADES'
+]
 
-# add note
-merged_invalid["INVALID_REASON"] = merged_invalid.apply(
-    lambda r: (
-        "No settings match for subject/state"
-        if pd.isna(r["SETTINGS_D_SUBJECT"])
-        else f"Grade {r['D_GRADE_CLEAN']} not in allowed grades {r['SETTINGS_GRADE_LIST']}"
-    ),
-    axis=1
-)
+merged_invalid = merged.loc[
+    ~merged["GRADE_ALLOWED"],
+    keep_cols
+].copy()
 
 
 # drop notes
