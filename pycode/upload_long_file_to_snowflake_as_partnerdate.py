@@ -81,3 +81,29 @@ success, nchunks, nrows, _ = write_pandas(
 
 CONN.commit()
 CONN.close()
+
+
+#-----------------------------------------------------   
+# ADD SETTINGS TO SNOWFLAKE TABLE
+#-----------------------------------------------------
+# # IMPORT DF_LONG IF NOT ALREADY LOADED
+if "settings_prefixed" in globals() and isinstance(settings_prefixed, pd.DataFrame):
+    pass
+else:
+    settings_prefixed = pd.read_parquet(Path(DATA_ROOT) / "settings_prefixed.parquet")
+
+    
+CONN = establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
+  
+success, nchunks, nrows, _ = write_pandas(
+    CONN,
+    settings_prefixed,
+    table_name= settings_table_name,
+    quote_identifiers=True,
+    overwrite=True, #if False appends data
+    auto_create_table=True
+)
+
+CONN.commit()
+CONN.close()
+

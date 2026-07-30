@@ -6,6 +6,17 @@ Clean df_long for upload:
  - Clean GRADE column
  - Merge settings_xl using SETTINGS_ prefix
  - Filter rows where D_GRADE_CLEAN is in STUDY_GRADES
+ 
+ 
+ The merged dataframe is the df_long merged to settings by subject
+ for each sukbject/mapgrowth_testname combo.  eg. Alg1 may map to math 6+
+ for one study and Alg1 for a second study.
+ 
+ the merged_valid dataframe (aka df_long_with_settings) ensures that the
+ partner Student Grade is within the STUDY_GRADES from setting of that particular
+ study(grades may differ for Alg1 study vs. Math6+ study, for example)
+ 
+ 
 """
 
 import re
@@ -75,7 +86,8 @@ def add_clean_int_columns(df: pd.DataFrame, cols: list) -> pd.DataFrame:
 
 df_long = add_clean_int_columns(
     df_long,
-    cols=["D_LOCAL_STID", "D_STATE_STID", "D_AGENCYCODE", "D_SS", "D_PLCODE"]
+    cols=["D_LOCAL_STID", "D_STATE_STID", "D_AGENCYCODE", "D_SS", "D_PLCODE"
+          ]
 )
 
 
@@ -196,6 +208,13 @@ df_long = add_clean_date_columns(df_long, ["D_TESTDATE", "D_DOB"])
 # CLEAN GRADE COLUMN
 #==============================================================
 
+# print(reverse_map.get("7"))
+# print(reverse_map.get("8"))
+# print(reverse_map.get("9"))
+# print(reverse_map.get("10"))
+# print(reverse_map.get("11"))
+# print(reverse_map.get("12"))
+
 def add_clean_grade_column(df: pd.DataFrame, col: str) -> pd.DataFrame:
     df = df.copy()
     clean_col = f"{col}_CLEAN"
@@ -210,10 +229,10 @@ def add_clean_grade_column(df: pd.DataFrame, col: str) -> pd.DataFrame:
         cleaned.append(reverse_map.get(s, pd.NA))
 
     df[clean_col] = pd.Series(cleaned, dtype="Int64")
-    return df
+    return df, cleaned
 
 
-df_long = add_clean_grade_column(df_long, "D_GRADE")
+df_long, cleaned = add_clean_grade_column(df_long, "D_GRADE")
 
 
 #==============================================================
@@ -280,7 +299,15 @@ settings_prefixed["SETTINGS_GRADE_LIST"] = (
     settings_prefixed["SETTINGS_STUDY_GRADES"].apply(parse_study_grades)
 )
 
-# merge
+# merge ON SUBECT/STATE
+# merged = df_long.merge(
+#     settings_prefixed,
+#     left_on=["D_SUBJECT", "D_STATE"],
+#     right_on=["SETTINGS_D_SUBJECT", "SETTINGS_STATE"],
+#     how="left"
+# )
+
+# MERGE ONLY ON STATE
 merged = df_long.merge(
     settings_prefixed,
     left_on=["D_SUBJECT", "D_STATE"],
@@ -306,6 +333,22 @@ merged_valid["SETTINGS_STUDY_GRADES"] = (
 )
 
 
+# KEEP MERGED INVALID FOR QA
+
+# rows that did NOT pass the grade filter
+merged_invalid = merged[~merged["GRADE_ALLOWED"]].copy()
+
+# add note
+merged_invalid["INVALID_REASON"] = merged_invalid.apply(
+    lambda r: (
+        "No settings match for subject/state"
+        if pd.isna(r["SETTINGS_D_SUBJECT"])
+        else f"Grade {r['D_GRADE_CLEAN']} not in allowed grades {r['SETTINGS_GRADE_LIST']}"
+    ),
+    axis=1
+)
+
+
 # drop notes
 df_long_with_settings = merged_valid.drop(columns=["SETTINGS_NOTES"], errors="ignore")
 
@@ -320,3 +363,4 @@ df_long_with_settings = merged_valid.drop(columns=["SETTINGS_NOTES"], errors="ig
 
 df_long.to_parquet(DATA_ROOT / "df_long.parquet", index=False)
 df_long_with_settings.to_parquet(DATA_ROOT / "df_long_with_settings.parquet", index=False)
+settings_prefixed.to_parquet(DATA_ROOT / "settings_prefixed.parquet", index=False)

@@ -3,6 +3,19 @@ settings.py
 parse_partner_files_to_working.py -- checks structure
 create_combined_file.py -- creates combined file in excel
 pivot_combineddf_long.py -- pivots to long and saves both long and wide as parquet
+clean_long_df.py
+
+-for partner counts
+missingness_counts.py
+df_long_counts.py
+
+
+-for merged data
+upload_long_file_to_snowflake_as_partnerdate.py (sic)
+
+-for posterity in snowflake
+upload_settings_xl_to_snowflake.py -- upload settings table. not done yet for WI or PA.
+upload_combined_to_snowflake_via_stage.py -- uploads the original partner data in combined format
 
 
 

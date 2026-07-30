@@ -56,23 +56,23 @@ SCHEMA = 'LINKING_STUDIES'
 #             ,"SS_CONVERTED","SS_UNCONVERTED"]
 
 # ------ PA2026 ---------
-# TERM_NUMBER = '202502'      # TERM OF DATA
-# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-# STATE_NAME = 'PENNSYLVANIA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-# STATE_ABR = 'PA'
-# DATA_YEAR = TERM_NUMBER[:4] 
-# SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
+TERM_NUMBER = '202502'      # TERM OF DATA
+STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+STATE_NAME = 'PENNSYLVANIA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+STATE_ABR = 'PA'
+DATA_YEAR = TERM_NUMBER[:4] 
+SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 
 # map_subject_codes = [1, 2, 100]  # for initial MAP counts
 
 
 # ------ WI2025 ---------
-TERM_NUMBER = '202502'      # TERM OF DATA
-STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-STATE_NAME = 'WISCONSIN' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-STATE_ABR = 'WI'
-DATA_YEAR = TERM_NUMBER[:4] 
-SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
+# TERM_NUMBER = '202502'      # TERM OF DATA
+# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+# STATE_NAME = 'WISCONSIN' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+# STATE_ABR = 'WI'
+# DATA_YEAR = TERM_NUMBER[:4] 
+# SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 
 
 # ------ TX2026 ---------
@@ -218,6 +218,8 @@ partner_table_name = ( f"{STATE_ABR}{DATA_YEAR}_PARTNERDATA").upper()
 
 combined_file_table_name = ( f"{STATE_ABR}{DATA_YEAR}_COMBINED_FILE").upper()
 
+settings_table_name = ( f"{STATE_ABR}{DATA_YEAR}_STUDY_SETTINGS").upper()
+
 
 
 #===============================================================
@@ -326,15 +328,15 @@ NWEA’s numeric subject code:
 
 
 #-------------------------------------------------------------
-# •	Default EOC terms should be:
-# o	EOC Algebra 1 to MAP Growth Math6+, grades 6-10
-# o	EOC Algebra 1 to MAP Growth Algebra 1, any applicable grades
-# o	EOC Algebra 2 should not be linked to MAP Growth Math6+, as they are not aligned
-# o	EOC Algebra 2 to MAP Growth Algebra 2, any applicable grades
-# o	EOC Geometry should not be linked to MAP Growth Math6+, as they are not aligned
-# o	EOC English 1 to MAP Growth Reading6+, grades 7-10
-# o	EOC English 2 to MAP Growth Reading6+, grades 8-10
-# o	EOC Biology to MAP Growth Science 9-12, grades 9-10
-# o	Grades 11-12 are not included because the general science student achievement norms are for grades 2-10
-# o	EOC Biology to MAP Growth Science 9-12 Life Science/Biology, any applicable grades
+# EOC Grade Range:
+# •     EOC Algebra 1 to MAP Growth Math6+, grades 6-10
+# •     EOC Algebra 1 to MAP Growth Algebra 1, any applicable grades
+# •     EOC Algebra 2 should not be linked to MAP Growth Math6+, as they are not aligned
+# •     EOC Algebra 2 to MAP Growth Algebra 2, any applicable grades
+# •     EOC Geometry should not be linked to MAP Growth Math6+, as they are not aligned
+# •     EOC English 1 to MAP Growth Reading6+, grades 7-10
+# •     EOC English 2 to MAP Growth Reading6+, grades 8-10
+# •     EOC Biology to MAP Growth Science 9-12, grades 9-10
+# o     Grades 11-12 are not included because the general science student achievement norms are for grades 2-10
+# •     EOC Biology to MAP Growth Science 9-12 Life Science/Biology, any applicable grades
 #-------------------------------------------------------------
