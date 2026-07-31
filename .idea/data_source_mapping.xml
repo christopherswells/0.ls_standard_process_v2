@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="DataSourcePerFileMappings">
+    <file url="file://$PROJECT_DIR$/sql/PA2025_merge_QA_checks.sql" value="4f87b1ee-4d3a-4e3e-a071-1f32853d2105" />
+    <file url="file://$PROJECT_DIR$/sql/adhoc merge checks.sql" value="4f87b1ee-4d3a-4e3e-a071-1f32853d2105" />
+    <file url="file://$PROJECT_DIR$/sql/count_queries_of_merged_studysample_qa.sql" value="4f87b1ee-4d3a-4e3e-a071-1f32853d2105" />
+  </component>
+</project>
