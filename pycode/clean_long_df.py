@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 import sys
 from typing import Optional
+import numpy as np
 
 #---------------------------------------------------
 # SETUP
@@ -341,22 +342,15 @@ settings_prefixed["SETTINGS_GRADE_LIST"] = (
     settings_prefixed["SETTINGS_STUDY_GRADES"].apply(parse_study_grades)
 )
 
-# merge ON SUBECT/STATE
-# merged = df_long.merge(
-#     settings_prefixed,
-#     left_on=["D_SUBJECT", "D_STATE"],
-#     right_on=["SETTINGS_D_SUBJECT", "SETTINGS_STATE"],
-#     how="left"
-# )
 
 
-#----------------------------------------------------------------
-### KEEP ONLY IF A SUBJECT IN SETTINGS
-### SHOULD NOT GENERALLY DROP RECORDS
-##  NECESSARY FOR WHEN EXTRA SS (CONVERTED/UNCONVERTED, eg.)
-# ----------------------------------------------------------------
 
-# 1. LEFT MERGE to detect which rows matched settings
+
+
+# ================================================================
+# 1. MERGE ON SUBJECT (LEFT MERGE TO DETECT DROPPED SUBJECTS)
+# ================================================================
+
 merged = df_long.merge(
     settings_prefixed,
     left_on="D_SUBJECT",
@@ -365,50 +359,42 @@ merged = df_long.merge(
     indicator=True
 )
 
-# 2. Identify rows that did NOT match settings
-#    These are the ones Snowflake would have dropped in an INNER join
+# Rows missing in settings (subject not found)
 merged_dropped_subjects = merged[merged["_merge"] == "left_only"].copy()
 
-# 3. Keep only rows that DID match settings (INNER behavior)
+# Rows that matched settings (inner behavior)
 merged_inner = merged[merged["_merge"] == "both"].copy()
 
-# 4. Remove helper column before returning final dataframes
+# Remove merge indicator
 merged_inner.drop(columns=["_merge"], inplace=True)
 merged_dropped_subjects.drop(columns=["_merge"], inplace=True)
 
 
-#-------------------------------------------------------------------------
 
-#PROBLEM WHEN GRADE IS NA
+# ================================================================
+# 3. FLAG MISSING GRADES
+# ================================================================
 
-#grades looky
-looky_grades = merged_inner[merged_inner['D_GRADE_CLEAN'].isna()]
+# Rows where grade is missing
+looky_grades_na = merged_inner[merged_inner["D_GRADE_CLEAN"].isna()].copy()
 
-#qa
-looky_merged_inner = merged_inner[['D_SUBJECT', 'D_GRADE_CLEAN', 'SETTINGS_GRADE_LIST']].copy()
-
-# Convert lists → tuples so Pandas can hash them
-looky_merged_inner['SETTINGS_GRADE_LIST'] = (
-    looky_merged_inner['SETTINGS_GRADE_LIST']
-    .apply(lambda x: tuple(x) if isinstance(x, list) else x)
-)
-
-# Now dedupe safely
-looky_unique = looky_merged_inner.drop_duplicates().copy()
-looky_grades_na = merged_inner[merged_inner['D_GRADE_CLEAN'].isna()]
-
-#-----------------------------------------------------------------------------
-
-# TODO: THESE ARE SIMPLY BEING REMOVED IN NEXT STEP. NEED TO RETHINK IF
-#       WE WANT TO PRESERVE GRADE MISSING/ OFF GRADE/ ETC.
-# FLAG IF GRADE IS MISSING
 merged_inner = flag_for_removal(
     merged_inner,
     looky_grades_na,
     "missing_grade"
 )
 
-# filter rows where grade is allowed
+
+
+# TODO:  ADD LOGIC TO FLAG ANY GRADE THAT IS OUTSIDE RANGE OF 
+        #  ANY STUDY BASED ON THE SUBJECT.  EG. MATH GRADE 2
+        # NOT VALID FOR EITHER MAP 2-5 OR 6+ OR EOC STUDY.
+
+
+# ================================================================
+# 4. FILTER ROWS WHERE GRADE IS ALLOWED
+# ================================================================
+
 merged_inner["GRADE_ALLOWED"] = merged_inner.apply(
     lambda r: (
         pd.notna(r["D_GRADE_CLEAN"]) and
@@ -418,37 +404,70 @@ merged_inner["GRADE_ALLOWED"] = merged_inner.apply(
     axis=1
 )
 
-merged_valid = merged_inner[merged_inner["GRADE_ALLOWED"]]
+# Valid rows
+merged_valid = merged_inner[merged_inner["GRADE_ALLOWED"]].copy()
 
-# makes settings grades string
+
+# ================================================================
+# 5. CLEAN SETTINGS_STUDY_GRADES
+# ================================================================
+
 merged_valid["SETTINGS_STUDY_GRADES"] = (
     merged_valid["SETTINGS_STUDY_GRADES"]
     .apply(lambda x: None if pd.isna(x) else str(x).strip())
 )
 
 
+# ================================================================
+# 6. INVALID ROWS FOR QA
+# ================================================================
 
-#-----------------------------------------------------------------------------
-# KEEP MERGED INVALID FOR QA
-
-# rows that did NOT pass the grade filter
 keep_cols = [
-    'D_DISTRICTNAME',
-    'D_SCHOOLNAME',
-    'D_SUBJECT',
-    'D_GRADE',
-    'D_GRADE_CLEAN',
-    'SETTINGS_STUDY_GRADES'
+    "D_DISTRICTNAME",
+    "D_SCHOOLNAME",
+    "D_SUBJECT",
+    "SETTINGS_D_MAPGROWTH_TEST_NAME",
+    "D_GRADE",
+    "D_GRADE_CLEAN",
+    "SETTINGS_STUDY_GRADES"
 ]
 
-merged_invalid = merged.loc[
-    ~merged["GRADE_ALLOWED"],
+merged_invalid = merged_inner.loc[
+    ~merged_inner["GRADE_ALLOWED"],
     keep_cols
 ].copy()
 
 
-# drop notes
+# ================================================================
+# 7. FINAL CLEANUP
+# ================================================================
+
 df_long_with_settings = merged_valid.drop(columns=["SETTINGS_NOTES"], errors="ignore")
+
+
+def sanitize_object_columns(df):
+    df = df.copy()
+
+    def sanitize_value(x):
+        # None / NaN
+        if x is None or (isinstance(x, float) and pd.isna(x)):
+            return None
+
+        # numpy arrays or python lists → convert to string
+        if isinstance(x, (list, tuple, np.ndarray)):
+            return str(list(x))  # convert ndarray → list → string
+
+        # everything else → convert to string
+        return str(x).strip()
+
+    for col in df.columns:
+        if df[col].dtype == "object":
+            df[col] = df[col].apply(sanitize_value)
+
+    return df
+
+
+settings_prefixed = sanitize_object_columns(settings_prefixed)
 
 
 

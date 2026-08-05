@@ -8,6 +8,11 @@ Create MAP Growth table in Snowflake
 
 title :  $STATE_ABR$DATA_YEAR_MAPDATA 
 
+
+running this from get_map_data_by_testnames_from_tables_v2.sql
+which uses 5 phases of merge.
+
+
 """
 import pandas as pd
 import sys
@@ -43,24 +48,19 @@ from py.settings import *
 # run: query_create_map_growth_table
 #------------------------------------------------------------------
 
-
-
-# EOG_TEST_NAMES = ", ".join(f"'{TEST}'" for TEST in EOG_TESTS)
-# HS_TEST_NAMES = ", ".join(f"'{TEST}'" for TEST in HS_TESTS)
-# ALL_TEST_NAMES = ", ".join(f"'{TEST}'" for TEST in EOG_TESTS + HS_TESTS)
-
 # CODE NO LONGER DISTINGUISHING BETWEEN EOG AND EOC/HS TESTS
 ALL_TEST_NAMES = ", ".join(f"'{TEST}'" for TEST in MAP_TEST_NAMES)
 
 # SET VARIABLES AND SQL QUERY
 variables = {
-        'DATA_YEAR': DATA_YEAR ,
-        'STATE_ABR': STATE_ABR ,
-        'STATE_NAME': STATE_NAME,  
-        'TERM_NUMBER': TERM_NUMBER,
-        'TESTNAMES': ALL_TEST_NAMES
+        'MAP_TABLE_NAME': map_table_name ,
+        'DATA_YEAR'     : DATA_YEAR ,
+        'STATE_ABR'     : STATE_ABR ,
+        # 'STATE_NAME'  : STATE_NAME,  
+        'TERM_NUMBER'   : TERM_NUMBER,
+        'TESTNAMES'     : ALL_TEST_NAMES
     }
-SQLSCRIPT = os.path.join(SQL_PATH, "get_map_data_by_testname_from_tables.sql")
+SQLSCRIPT = os.path.join(SQL_PATH, "get_map_data_by_testname_from_tables_v2.sql")
 
 # SUBSTITUTE VARS INTO QUERY
 query_create_map_growth_table = add_variables_to_sql_template( SQLSCRIPT, variables)
