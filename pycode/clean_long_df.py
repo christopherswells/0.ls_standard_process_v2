@@ -50,26 +50,67 @@ if "df_long" not in globals() or not isinstance(df_long, pd.DataFrame):
 #==============================================================
 
 grade_map = {
-    1: ["1", "1ST", "ONE", "FIRST"],
-    2: ["2", "2ND", "TWO", "SECOND"],
-    3: ["3", "3RD", "THREE", "THIRD"],
-    4: ["4", "4TH", "FOUR", "FOURTH"],
-    5: ["5", "5TH", "FIVE", "FIFTH"],
-    6: ["6", "6TH", "SIX", "SIXTH"],
-    7: ["7", "7TH", "SEVEN", "SEVENTH"],
-    8: ["8", "8TH", "EIGHT", "EIGHTH"],
-    9: ["9", "9TH", "NINE", "NINTH"],
-    10: ["10", "10TH", "TEN", "TENTH"],
-    11: ["11", "11TH", "ELEVEN", "ELEVENTH"],
-    12: ["12", "12TH", "TWELVE", "TWELFTH"],
+    1: ["1", "1ST", "ONE", "FIRST", "GRADE 1", "GRADE 01"],
+    2: ["2", "2ND", "TWO", "SECOND", "GRADE 2", "GRADE 02"],
+    3: ["3", "3RD", "THREE", "THIRD", "GRADE 3", "GRADE 03"],
+    4: ["4", "4TH", "FOUR", "FOURTH", "GRADE 4", "GRADE 04"],
+    5: ["5", "5TH", "FIVE", "FIFTH", "GRADE 5", "GRADE 05"],
+    6: ["6", "6TH", "SIX", "SIXTH", "GRADE 6", "GRADE 06"],
+    7: ["7", "7TH", "SEVEN", "SEVENTH", "GRADE 7", "GRADE 07"],
+    8: ["8", "8TH", "EIGHT", "EIGHTH", "GRADE 8", "GRADE 08"],
+    9: ["9", "9TH", "NINE", "NINTH", "GRADE 9", "GRADE 09"],
+    10: ["10", "10TH", "TEN", "TENTH", "GRADE 10"],
+    11: ["11", "11TH", "ELEVEN", "ELEVENTH", "GRADE 11"],
+    12: ["12", "12TH", "TWELVE", "TWELFTH", "GRADE 12"],
     # skip 13
-    14: ["K", "KINDERGARTEN"],
+    14: ["K", "KINDERGARTEN", "GRADE K"],
 }
+
 
 reverse_map = {}
 for num, variants in grade_map.items():
     for v in variants:
         reverse_map[v] = num
+        
+        
+#TODO: add to qa checks early.  and check D_GRADE VS D_GRADE_CLEAN
+df_long.D_GRADE.value_counts(dropna = False)
+
+
+
+
+#-----------------------------------------------------------------
+# helper function: flag for removal
+#-----------------------------------------------------------------
+def flag_for_removal(df, rows_to_flag, reason):
+    """
+    Flags records in df based on rows_to_flag.
+    
+    - If a row is flagged, append reason to existing FLAG_REASON using '|'.
+    - If a row is not flagged, FLAG_REASON becomes NA.
+    """
+
+    df = df.copy()
+
+    # Boolean mask for rows to flag
+    mask = df.index.isin(rows_to_flag.index)
+
+    # Initialize FLAG_REASON as NA for all rows
+    df["FLAG_REASON"] = pd.NA
+
+    # For flagged rows:
+    # If FLAG_REASON already exists, append with '|'
+    # Otherwise, set to the new reason
+    df.loc[mask, "FLAG_REASON"] = (
+        df.loc[mask, "FLAG_REASON"]
+        .fillna(reason)                      # if NA, set reason
+        .astype(str)
+        .apply(lambda x: x if x == reason else f"{x}|{reason}")
+    )
+
+    return df
+
+
 
 
 #==============================================================
@@ -308,24 +349,76 @@ settings_prefixed["SETTINGS_GRADE_LIST"] = (
 #     how="left"
 # )
 
-# MERGE ONLY ON Subject
+
+#----------------------------------------------------------------
+### KEEP ONLY IF A SUBJECT IN SETTINGS
+### SHOULD NOT GENERALLY DROP RECORDS
+##  NECESSARY FOR WHEN EXTRA SS (CONVERTED/UNCONVERTED, eg.)
+# ----------------------------------------------------------------
+
+# 1. LEFT MERGE to detect which rows matched settings
 merged = df_long.merge(
     settings_prefixed,
-    left_on=["D_SUBJECT"],
-    right_on=["SETTINGS_D_SUBJECT"],
-    how="left"
+    left_on="D_SUBJECT",
+    right_on="SETTINGS_D_SUBJECT",
+    how="left",
+    indicator=True
+)
+
+# 2. Identify rows that did NOT match settings
+#    These are the ones Snowflake would have dropped in an INNER join
+merged_dropped_subjects = merged[merged["_merge"] == "left_only"].copy()
+
+# 3. Keep only rows that DID match settings (INNER behavior)
+merged_inner = merged[merged["_merge"] == "both"].copy()
+
+# 4. Remove helper column before returning final dataframes
+merged_inner.drop(columns=["_merge"], inplace=True)
+merged_dropped_subjects.drop(columns=["_merge"], inplace=True)
+
+
+#-------------------------------------------------------------------------
+
+#PROBLEM WHEN GRADE IS NA
+
+#grades looky
+looky_grades = merged_inner[merged_inner['D_GRADE_CLEAN'].isna()]
+
+#qa
+looky_merged_inner = merged_inner[['D_SUBJECT', 'D_GRADE_CLEAN', 'SETTINGS_GRADE_LIST']].copy()
+
+# Convert lists → tuples so Pandas can hash them
+looky_merged_inner['SETTINGS_GRADE_LIST'] = (
+    looky_merged_inner['SETTINGS_GRADE_LIST']
+    .apply(lambda x: tuple(x) if isinstance(x, list) else x)
+)
+
+# Now dedupe safely
+looky_unique = looky_merged_inner.drop_duplicates().copy()
+looky_grades_na = merged_inner[merged_inner['D_GRADE_CLEAN'].isna()]
+
+#-----------------------------------------------------------------------------
+
+# TODO: THESE ARE SIMPLY BEING REMOVED IN NEXT STEP. NEED TO RETHINK IF
+#       WE WANT TO PRESERVE GRADE MISSING/ OFF GRADE/ ETC.
+# FLAG IF GRADE IS MISSING
+merged_inner = flag_for_removal(
+    merged_inner,
+    looky_grades_na,
+    "missing_grade"
 )
 
 # filter rows where grade is allowed
-merged["GRADE_ALLOWED"] = merged.apply(
-    lambda r: r["D_GRADE_CLEAN"] in r["SETTINGS_GRADE_LIST"]
-    if isinstance(r["SETTINGS_GRADE_LIST"], list)
-    else False,
+merged_inner["GRADE_ALLOWED"] = merged_inner.apply(
+    lambda r: (
+        pd.notna(r["D_GRADE_CLEAN"]) and
+        isinstance(r["SETTINGS_GRADE_LIST"], (list, tuple)) and
+        r["D_GRADE_CLEAN"] in r["SETTINGS_GRADE_LIST"]
+    ),
     axis=1
 )
 
-merged_valid = merged[merged["GRADE_ALLOWED"]]
-
+merged_valid = merged_inner[merged_inner["GRADE_ALLOWED"]]
 
 # makes settings grades string
 merged_valid["SETTINGS_STUDY_GRADES"] = (
@@ -334,6 +427,8 @@ merged_valid["SETTINGS_STUDY_GRADES"] = (
 )
 
 
+
+#-----------------------------------------------------------------------------
 # KEEP MERGED INVALID FOR QA
 
 # rows that did NOT pass the grade filter
