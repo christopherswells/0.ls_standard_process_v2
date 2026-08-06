@@ -26,48 +26,53 @@ from pathlib import Path
 
 import os
 
-# IN SPYDER THE WORKING DIR IS NOT ALWAYS SETTING TO THE PROJECT DIR.  HARDCODED THE PROJECT DIR LOCATION.
-os.chdir(r'K:\SMS Team\Chris_Wells\3.Linking\0. Standard Process\Linking_Studies_Data_Prep_code')
-sys.path.append(r'K:\SMS Team\Chris_Wells\3.Linking\0. Standard Process\Linking_Studies_Data_Prep_code')
+# Spyder sometimes gets screwy with the working directory
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
 
-# CHECK IF THE CWD --> ...\Linking_Studies_Data_Prep_code
-if os.path.basename(os.getcwd())  != 'Linking_Studies_Data_Prep_code':
-    print('Your Working directory is : ' + os.getcwd())
-    print('Your Working directory should be the location of this folder: "Linking_Studies_Data_Prep_code"')
-    
+   
 
-from common.LS_MAP_Count_Functions import establish_snowflake_connector
+from common.ls_map_count_functions import establish_snowflake_connector
 # from common.LS_MAP_Count_Functions import run_map_counts_query
-from common.LS_MAP_Count_Functions import output_to_excel_tab
-from common.LS_MAP_Count_Functions import add_variables_to_sql_template
-from common.LS_MAP_Count_Functions import query_snowflake
-from py.settings import *
+from common.ls_map_count_functions import output_to_excel_tab
+from common.ls_map_count_functions import add_variables_to_sql_template
+from common.ls_map_count_functions import query_snowflake
+from common.ls_map_count_functions import query_snowflake_sqlalchemy
+from pycode.settings import *
+
 
 
 #------------------------------------------------------------------
 # run: query_create_map_growth_table
 #------------------------------------------------------------------
 
+SQL_PATH = ROOT / "common" / "py_sql"
+print(SQL_PATH)
+
 # CODE NO LONGER DISTINGUISHING BETWEEN EOG AND EOC/HS TESTS
-ALL_TEST_NAMES = ", ".join(f"'{TEST}'" for TEST in MAP_TEST_NAMES)
+ALL_TEST_NAMES = ", ".join(f"'{TEST}'" for TEST in map_test_names)
 
 # SET VARIABLES AND SQL QUERY
 variables = {
-        'MAP_TABLE_NAME': map_table_name ,
+        'MAP_TABLE_NAME': f'LINKING_STUDIES.{map_table_name}' ,
         'DATA_YEAR'     : DATA_YEAR ,
         'STATE_ABR'     : STATE_ABR ,
         # 'STATE_NAME'  : STATE_NAME,  
         'TERM_NUMBER'   : TERM_NUMBER,
         'TESTNAMES'     : ALL_TEST_NAMES
     }
-SQLSCRIPT = os.path.join(SQL_PATH, "get_map_data_by_testname_from_tables_v2.sql")
+SQLSCRIPT = os.path.join(SQL_PATH, "get_map_data_by_testnames_from_tables_v2.sql")
 
 # SUBSTITUTE VARS INTO QUERY
 query_create_map_growth_table = add_variables_to_sql_template( SQLSCRIPT, variables)
 
 # RUN QUERY
 # merged_data = query_snowflake(query_create_studysample_qa, SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
-query_snowflake(query_create_map_growth_table, SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
+# query_snowflake(query_create_map_growth_table, SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
+
+#switch to sql alchemy 
+query_snowflake_sqlalchemy(query_create_map_growth_table, SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
 
 
 

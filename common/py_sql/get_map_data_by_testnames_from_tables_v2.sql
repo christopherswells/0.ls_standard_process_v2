@@ -2,7 +2,7 @@
 --set TABLE_NAME = $STATE_ABR || $STUDY_YEAR || '_MAPDATA';
 
 
-create or replace table identifier('LINKING_STUDIES.' || '$MAP_TABLE_NAME') as
+create or replace table identifier('$MAP_TABLE_NAME') as
 --create or replace table IDENTIFIER($map_table_name) as 
 
 with included_districts as (
@@ -172,7 +172,7 @@ included_test_events as (
         and test_event.growth_event_yn = true
         and test_event.score is not null
         --AND test.name IN (SELECT TRIM(VALUE) FROM TABLE(SPLIT_TO_TABLE($testnames, '|')))
-        and TEST_NAME in ('$TESTNAMES')
+        and TEST_NAME in ($TESTNAMES)
        
 )
 

@@ -220,7 +220,7 @@ combined_file_table_name = ( f"{STATE_ABR}{DATA_YEAR}_COMBINED_FILE").upper()
 
 settings_table_name = ( f"{STATE_ABR}{DATA_YEAR}_STUDY_SETTINGS").upper()
 
-map_table_name = ( f"{STATE_ABR}{DATA_YEAR}_MAP_DATA".upper()
+map_table_name = ( f"{STATE_ABR}{DATA_YEAR}_MAP_DATA").upper()
 
 
 
