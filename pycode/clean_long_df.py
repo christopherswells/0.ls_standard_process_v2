@@ -112,6 +112,26 @@ def flag_for_removal(df, rows_to_flag, reason):
     return df
 
 
+def append_flag_reason(df, mask, reason):
+    """
+    Append a reason to FLAG_REASON.
+
+    If FLAG_REASON is null:
+        reason
+
+    If FLAG_REASON already contains a reason:
+        existing_reason|reason
+    """
+
+    current = df.loc[mask, "FLAG_REASON"]
+
+    df.loc[mask, "FLAG_REASON"] = np.where(
+        current.isna(),
+        reason,
+        current.astype(str) + "|" + reason
+    )
+
+    return df
 
 
 #==============================================================
@@ -250,13 +270,6 @@ df_long = add_clean_date_columns(df_long, ["D_TESTDATE", "D_DOB"])
 # CLEAN GRADE COLUMN
 #==============================================================
 
-# print(reverse_map.get("7"))
-# print(reverse_map.get("8"))
-# print(reverse_map.get("9"))
-# print(reverse_map.get("10"))
-# print(reverse_map.get("11"))
-# print(reverse_map.get("12"))
-
 def add_clean_grade_column(df: pd.DataFrame, col: str) -> pd.DataFrame:
     df = df.copy()
     clean_col = f"{col}_CLEAN"
@@ -298,6 +311,8 @@ def place_all_clean_columns_next_to_originals(df: pd.DataFrame) -> pd.DataFrame:
     return df[cols]
 
 df_long = place_all_clean_columns_next_to_originals(df_long)
+
+
 
 
 #==============================================================
@@ -344,9 +359,6 @@ settings_prefixed["SETTINGS_GRADE_LIST"] = (
 
 
 
-
-
-
 # ================================================================
 # 1. MERGE ON SUBJECT (LEFT MERGE TO DETECT DROPPED SUBJECTS)
 # ================================================================
@@ -372,19 +384,95 @@ merged_dropped_subjects.drop(columns=["_merge"], inplace=True)
 
 
 # ================================================================
-# 3. FLAG MISSING GRADES
+# 3. FLAG RECORDS FOR REMOVAL
 # ================================================================
 
-# Rows where grade is missing
-looky_grades_na = merged_inner[merged_inner["D_GRADE_CLEAN"].isna()].copy()
+merged_inner["FLAG_REASON"] = pd.NA
 
-merged_inner = flag_for_removal(
+
+# ----------------------------------------------------
+# FLAG MISSING GRADE
+# ----------------------------------------------------
+missing_grade_mask = merged_inner["D_GRADE_CLEAN"].isna()
+
+merged_inner = append_flag_reason(
     merged_inner,
-    looky_grades_na,
+    missing_grade_mask,
     "missing_grade"
 )
 
 
+# ----------------------------------------------------
+# FLAG GRADE NOT IN ANY STUDY FOR SUBJECT
+# ----------------------------------------------------
+# Build a lookup of all grades valid for a subject
+# across all studies.
+
+allowed_grades_by_subject = (
+    settings_prefixed
+    .groupby("SETTINGS_D_SUBJECT")["SETTINGS_GRADE_LIST"]
+    .apply(
+        lambda x: {
+            int(g)
+            for grade_list in x.dropna()
+            for g in grade_list
+        }
+    )
+    .to_dict()
+)
+
+
+grade_allowed_any_study = []
+
+for subject, grade in zip(
+    merged_inner["D_SUBJECT"],
+    merged_inner["D_GRADE_CLEAN"]
+):
+
+    if pd.isna(subject):
+        grade_allowed_any_study.append(False)
+
+    elif pd.isna(grade):
+        grade_allowed_any_study.append(False)
+
+    elif subject not in allowed_grades_by_subject:
+        grade_allowed_any_study.append(False)
+
+    else:
+        grade_allowed_any_study.append(
+            int(grade)
+            in allowed_grades_by_subject[subject]
+        )
+
+merged_inner["GRADE_ALLOWED_ANY_STUDY"] = grade_allowed_any_study
+
+
+off_grade_mask = (
+    merged_inner["D_GRADE_CLEAN"].notna()
+    & ~merged_inner["GRADE_ALLOWED_ANY_STUDY"]
+)
+
+merged_inner = append_flag_reason(
+    merged_inner,
+    off_grade_mask,
+    "grade_not_in_study"
+)
+
+
+# ----------------------------------------------------
+# CREATE FLAGGED FOR REMOVAL TABLE
+# ----------------------------------------------------
+flagged_for_removal = merged_inner.loc[
+    merged_inner["FLAG_REASON"].notna()
+].copy()
+
+
+# ----------------------------------------------------
+# REMOVE FLAGGED RECORDS BEFORE STUDY FILTERING
+# ----------------------------------------------------
+merged_inner = merged_inner.loc[
+    merged_inner["FLAG_REASON"].isna()
+].copy()
 
 # TODO:  ADD LOGIC TO FLAG ANY GRADE THAT IS OUTSIDE RANGE OF 
         #  ANY STUDY BASED ON THE SUBJECT.  EG. MATH GRADE 2
@@ -425,16 +513,23 @@ merged_valid["SETTINGS_STUDY_GRADES"] = (
 keep_cols = [
     "D_DISTRICTNAME",
     "D_SCHOOLNAME",
+    "D_FILENAMEFROMDISTRICT",
     "D_SUBJECT",
     "SETTINGS_D_MAPGROWTH_TEST_NAME",
     "D_GRADE",
     "D_GRADE_CLEAN",
-    "SETTINGS_STUDY_GRADES"
+    "SETTINGS_STUDY_GRADES",
+    "FLAG_REASON"
 ]
 
 merged_invalid = merged_inner.loc[
     ~merged_inner["GRADE_ALLOWED"],
-    keep_cols
+    [c for c in keep_cols if c in merged_inner.columns]
+].copy()
+
+
+flagged_for_removal = flagged_for_removal[
+    [c for c in keep_cols if c in flagged_for_removal.columns]
 ].copy()
 
 
@@ -468,8 +563,9 @@ def sanitize_object_columns(df):
 
 
 settings_prefixed = sanitize_object_columns(settings_prefixed)
-
-
+merged_invalid = sanitize_object_columns(merged_invalid)
+flagged_for_removal = sanitize_object_columns(flagged_for_removal)
+df_long_with_settings = sanitize_object_columns(df_long_with_settings)
 
 
 #==============================================================
@@ -478,6 +574,30 @@ settings_prefixed = sanitize_object_columns(settings_prefixed)
 #  merged_valid -- df_long with Settings_XL fields
 #==============================================================
 
-df_long.to_parquet(DATA_ROOT / "df_long.parquet", index=False)
-df_long_with_settings.to_parquet(DATA_ROOT / "df_long_with_settings.parquet", index=False)
-settings_prefixed.to_parquet(DATA_ROOT / "settings_prefixed.parquet", index=False)
+df_long.to_parquet(
+    DATA_ROOT / "df_long.parquet",
+    index=False
+)
+
+df_long_with_settings.to_parquet(
+    DATA_ROOT / "df_long_with_settings.parquet",
+    index=False
+)
+
+settings_prefixed.to_parquet(
+    DATA_ROOT / "settings_prefixed.parquet",
+    index=False
+)
+
+# merged_invalid.to_parquet(
+#     DATA_ROOT / "merged_invalid.parquet",
+#     index=False
+# )
+
+flagged_for_removal.to_parquet(
+    DATA_ROOT / "flagged_for_removal.parquet",
+    index=False
+)
+
+
+
