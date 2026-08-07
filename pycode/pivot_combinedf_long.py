@@ -157,5 +157,5 @@ df_long = rename_columns_upper_with_prefix(df_long)
 # Save outputs
 # ---------------------------------------------------------
 
-df_wide.to_parquet(DATA_ROOT / "df_wide.parquet", index=False)
-df_long.to_parquet(DATA_ROOT / "df_long.parquet", index=False)
+# df_wide.to_parquet(DATA_ROOT / "df_wide.parquet", index=False)
+# df_long.to_parquet(DATA_ROOT / "df_long.parquet", index=False)

@@ -42,8 +42,8 @@ from pycode.settings import *   # loads DATA_ROOT and settings_xl
 # LOAD DF_LONG
 #---------------------------------------------------
 
-if "df_long" not in globals() or not isinstance(df_long, pd.DataFrame):
-    df_long = pd.read_parquet(Path(DATA_ROOT) / "df_long.parquet")
+# if "df_long" not in globals() or not isinstance(df_long, pd.DataFrame):
+#     df_long = pd.read_parquet(Path(DATA_ROOT) / "df_long.parquet")
 
 
 #==============================================================
@@ -312,7 +312,7 @@ def place_all_clean_columns_next_to_originals(df: pd.DataFrame) -> pd.DataFrame:
 
 df_long = place_all_clean_columns_next_to_originals(df_long)
 
-
+df_long[['D_GRADE','D_GRADE_CLEAN']].value_counts(dropna = False)
 
 
 #==============================================================
@@ -537,7 +537,8 @@ flagged_for_removal = flagged_for_removal[
 # 7. FINAL CLEANUP
 # ================================================================
 
-df_long_with_settings = merged_valid.drop(columns=["SETTINGS_NOTES"], errors="ignore")
+df_long = merged_valid.drop(columns=[["SETTINGS_NOTES",'GRADE_ALLOWED_ANY_STUDY', 'GRADE_ALLOWED']]
+                            , errors="ignore")
 
 
 def sanitize_object_columns(df):
@@ -565,24 +566,31 @@ def sanitize_object_columns(df):
 settings_prefixed = sanitize_object_columns(settings_prefixed)
 merged_invalid = sanitize_object_columns(merged_invalid)
 flagged_for_removal = sanitize_object_columns(flagged_for_removal)
-df_long_with_settings = sanitize_object_columns(df_long_with_settings)
+df_long = sanitize_object_columns(df_long)
 
 
 #==============================================================
 # SAVE OUTPUT
-#  df_long -- long file without SETTINGS_XL fields merged in
+#  df_long -- long file with settings added.  reduced to 
+#             valid grades.         
 #  merged_valid -- df_long with Settings_XL fields
 #==============================================================
+
+df_wide.to_parquet(
+    DATA_ROOT / "df_wide.parquet", 
+    index=False
+    )
 
 df_long.to_parquet(
     DATA_ROOT / "df_long.parquet",
     index=False
 )
 
-df_long_with_settings.to_parquet(
-    DATA_ROOT / "df_long_with_settings.parquet",
-    index=False
-)
+ 
+# df_long_with_settings.to_parquet(
+#     DATA_ROOT / "df_long_with_settings.parquet",
+#     index=False
+# )
 
 settings_prefixed.to_parquet(
     DATA_ROOT / "settings_prefixed.parquet",
