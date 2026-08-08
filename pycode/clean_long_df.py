@@ -537,7 +537,7 @@ flagged_for_removal = flagged_for_removal[
 # 7. FINAL CLEANUP
 # ================================================================
 
-df_long = merged_valid.drop(columns=[["SETTINGS_NOTES",'GRADE_ALLOWED_ANY_STUDY', 'GRADE_ALLOWED']]
+df_long = merged_valid.drop(columns=["SETTINGS_NOTES",'GRADE_ALLOWED_ANY_STUDY', 'GRADE_ALLOWED']
                             , errors="ignore")
 
 
