@@ -91,29 +91,27 @@ for reason, df_reason in flagged_for_removal.groupby(
     dropna=False
 ):
 
-    # base grouping
+    # Base grouping included for every flag
     group_cols = [
         "FLAG_REASON",
-        "D_FILENAMEFROMDISTRICT"
+        "D_FILENAMEFROMDISTRICT",
+        "D_SUBJECT",
     ]
 
-    # add fields relevant to each flag
+    # Add fields specific to the flag type
     if "grade_not_in_study" in str(reason):
         group_cols.extend([
-            "D_SUBJECT",
             "D_GRADE",
             "D_GRADE_CLEAN"
         ])
 
     if "missing_grade" in str(reason):
         group_cols.extend([
-            "D_SUBJECT",
             "D_GRADE"
         ])
 
     if "non_numeric_SS" in str(reason):
         group_cols.extend([
-            "D_SUBJECT",
             "D_SS"
         ])
 
@@ -130,7 +128,7 @@ for reason, df_reason in flagged_for_removal.groupby(
             "SETTINGS_TERM"
         ])
 
-    # keep only existing columns
+    # Keep only columns that exist
     group_cols = [
         c for c in group_cols
         if c in df_reason.columns
@@ -146,20 +144,101 @@ for reason, df_reason in flagged_for_removal.groupby(
 
     summary_parts.append(temp)
 
+
 flagged_for_removal_summary = pd.concat(
     summary_parts,
     ignore_index=True
 )
 
 
+# ----------------------------------------------------
+# TOTAL PARTNER RECORDS BY FILE / SUBJECT
+# (used as denominator for percentages)
+# ----------------------------------------------------
+
+subject_totals = (
+    df_long
+    .groupby(
+        [
+            "D_FILENAMEFROMDISTRICT",
+            "D_SUBJECT"
+        ],
+        dropna=False
+    )
+    .size()
+    .rename("total_partner_subject_records")
+    .reset_index()
+)
+
+
+# ----------------------------------------------------
+# ADD TOTALS AND PERCENTAGES
+# ----------------------------------------------------
+
 flagged_for_removal_summary = (
     flagged_for_removal_summary
-    .sort_values(
-        [
-            "FLAG_REASON",
-            "D_FILENAMEFROMDISTRICT"
-        ]
+    .merge(
+        subject_totals,
+        on=[
+            "D_FILENAMEFROMDISTRICT",
+            "D_SUBJECT"
+        ],
+        how="left"
     )
+)
+
+flagged_for_removal_summary["pct_affected_records"] = (
+    100
+    * flagged_for_removal_summary["record_count"]
+    / flagged_for_removal_summary["total_partner_subject_records"]
+)
+
+flagged_for_removal_summary["pct_affected_records"] = (
+    flagged_for_removal_summary["pct_affected_records"]
+    .round(1)
+)
+
+
+# ----------------------------------------------------
+# PLACE TOTAL / COUNT / PCT TOGETHER
+# ----------------------------------------------------
+
+base_cols = [
+    c for c in flagged_for_removal_summary.columns
+    if c not in [
+        "total_partner_subject_records",
+        "record_count",
+        "pct_affected_records",
+    ]
+]
+
+flagged_for_removal_summary = flagged_for_removal_summary[
+    base_cols
+    + [
+        "total_partner_subject_records",
+        "record_count",
+        "pct_affected_records",
+    ]
+]
+
+
+# ----------------------------------------------------
+# SORT FOR READABILITY
+# ----------------------------------------------------
+
+sort_cols = [
+    c for c in [
+        "FLAG_REASON",
+        "D_FILENAMEFROMDISTRICT",
+        "D_SUBJECT"
+    ]
+    if c in flagged_for_removal_summary.columns
+]
+
+flagged_for_removal_summary = (
+    flagged_for_removal_summary
+    .sort_values(sort_cols)
+    .reset_index(drop=True)
 )
 
 

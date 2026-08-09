@@ -76,12 +76,12 @@ SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE"
 
 
 # ------ TX2026 ---------
-# TERM_NUMBER = '202602'      # TERM OF DATA
-# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-# STATE_NAME = 'TEXAS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-# STATE_ABR = 'TX'
-# DATA_YEAR = TERM_NUMBER[:4] 
-# SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
+TERM_NUMBER = '202602'      # TERM OF DATA
+STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+STATE_NAME = 'TEXAS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+STATE_ABR = 'TX'
+DATA_YEAR = TERM_NUMBER[:4] 
+SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 
 
 #------ COLORADO-------
@@ -123,7 +123,6 @@ DATA_ROOT = os.path.join(SDRIVE, STUDY_YEAR, STATE_ABR)
 # PARTNER DATA RAW TO SNOWFLAKE LINKING STUDIES SCHEMA
 combined_file_table_name = ( f"{STATE_ABR}{STUDY_YEAR}_COMBINED_FILE").upper()
 combined_file_stage_table_name = (f"{combined_file_table_name}_STAGE")
-
 
 
 # PRINT THE DATA ROOT

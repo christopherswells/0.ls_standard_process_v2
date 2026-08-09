@@ -38,7 +38,7 @@ from pycode.settings import *
 if "df_long_with_settings" in globals() and isinstance(df_long_with_settings, pd.DataFrame):
     pass
 else:
-    df_long_with_settings = pd.read_parquet(Path(DATA_ROOT) / "df_long_with_settings.parquet")
+    df_long_with_settings = pd.read_parquet(Path(DATA_ROOT) / "df_long.parquet")
     
     
 CONN = establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)

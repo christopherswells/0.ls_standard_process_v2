@@ -1,9 +1,15 @@
 run order:
+create_map_growth_data_table.py (any order)
 settings.py
 parse_partner_files_to_working.py -- checks structure
 create_combined_file.py -- creates combined file in excel
 pivot_combineddf_long.py -- pivots to long and saves both long and wide as parquet
-clean_long_df.py
+uploade_long_file_to_snowflake.py (also uploads settings and wide?)
+missingness_counts.py  (should be combined with df_long_counts)
+df_long_counts.py
+
+
+clean_long_df.py  --> this logic moved to pivot_combined_df.
 
 -for partner counts
 missingness_counts.py
@@ -23,8 +29,8 @@ upload_combined_to_snowflake_via_stage.py -- uploads the original partner data i
 
 
 MAP DATA
- * query from tables in sql
- * query from python using form fill-- better.  use settings table to select gradde, etc. for each test
+ * query from tables in sql-- moved to py-done.
+ * query from python using form fill-- better.  use settings table to select grade, etc. for each test
  * 
  
  partner data
@@ -35,7 +41,11 @@ MAP DATA
  
  Settings_xl added to snowflake
  
- MERGE
  
- MERGE COUNTS
+ todo: 
+ MERGE -- run in Python
+ 
+ MERGE COUNTS,  including map counts and partner coutns percent merged -- run in Python
+ 
+ Counts of potential matches by Grade
  
