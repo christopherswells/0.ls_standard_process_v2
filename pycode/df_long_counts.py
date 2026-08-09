@@ -35,6 +35,10 @@ missing_by_file_only = missingness_long(
     group_cols=["FILENAMEFROMDISTRICT"]
 )
 
+flagged_for_removal = pd.read_parquet(
+    DATA_ROOT / "flagged_for_removal.parquet"
+)
+
 
 # ----------------------------------------------------
 # MISSINGNESS OF DF_LONG
@@ -77,6 +81,89 @@ counts_subject_grade = (
 
 
 # ----------------------------------------------------
+# FLAGGED FOR REMOVAL SUMMARY
+# ----------------------------------------------------
+
+summary_parts = []
+
+for reason, df_reason in flagged_for_removal.groupby(
+    "FLAG_REASON",
+    dropna=False
+):
+
+    # base grouping
+    group_cols = [
+        "FLAG_REASON",
+        "D_FILENAMEFROMDISTRICT"
+    ]
+
+    # add fields relevant to each flag
+    if "grade_not_in_study" in str(reason):
+        group_cols.extend([
+            "D_SUBJECT",
+            "D_GRADE",
+            "D_GRADE_CLEAN"
+        ])
+
+    if "missing_grade" in str(reason):
+        group_cols.extend([
+            "D_SUBJECT",
+            "D_GRADE"
+        ])
+
+    if "non_numeric_SS" in str(reason):
+        group_cols.extend([
+            "D_SUBJECT",
+            "D_SS"
+        ])
+
+    if "incorrect_term" in str(reason):
+        group_cols.extend([
+            "D_TERM",
+            "SETTINGS_TERM"
+        ])
+
+    if "test_date_out_of_range" in str(reason):
+        group_cols.extend([
+            "D_TESTDATE",
+            "D_TESTDATE_CLEAN",
+            "SETTINGS_TERM"
+        ])
+
+    # keep only existing columns
+    group_cols = [
+        c for c in group_cols
+        if c in df_reason.columns
+    ]
+
+    temp = (
+        df_reason
+        .groupby(group_cols, dropna=False)
+        .size()
+        .rename("record_count")
+        .reset_index()
+    )
+
+    summary_parts.append(temp)
+
+flagged_for_removal_summary = pd.concat(
+    summary_parts,
+    ignore_index=True
+)
+
+
+flagged_for_removal_summary = (
+    flagged_for_removal_summary
+    .sort_values(
+        [
+            "FLAG_REASON",
+            "D_FILENAMEFROMDISTRICT"
+        ]
+    )
+)
+
+
+# ----------------------------------------------------
 # OUTPUT COUNTS AND QA
 # ----------------------------------------------------
 
@@ -98,6 +185,7 @@ summaries = {
     "missing_long_by_grade_and_file": missing_long_by_grade_and_file,
     "counts_subject": counts_subject,
     "counts_subject_grade": counts_subject_grade,
+    "flagged_for_removal_summary": flagged_for_removal_summary,
 }
 
 

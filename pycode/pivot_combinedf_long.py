@@ -149,6 +149,8 @@ df_long = pivot_scores_long_no_impute(
     drop_rows_all_scores_missing=True
 )
 
+df_long = df_long.reset_index(drop=True)
+
 # ---------------------------------------------------------
 # Rename long columns with prefix (already uppercase)
 # ---------------------------------------------------------
@@ -272,6 +274,7 @@ df_long = add_clean_int_columns(
     # cols=["D_LOCAL_STID", "D_STATE_STID", "D_AGENCYCODE", "D_SS", "D_PLCODE" ]
     cols=["D_LOCAL_STID", "D_STATE_STID", "D_AGENCYCODE", "D_SS" ]
 )
+
 
 
 #==============================================================
@@ -491,7 +494,8 @@ settings_prefixed["SETTINGS_GRADE_LIST"] = (
 
 
 # ================================================================
-# 1. MERGE ON SUBJECT (LEFT MERGE TO DETECT DROPPED SUBJECTS)
+# 1. MERGE SETTINGS ON SUBJECT/GRADE 
+#    (LEFT MERGE TO DETECT DROPPED SUBJECTS)
 # ================================================================
 
 merged = df_long.merge(
@@ -515,7 +519,7 @@ merged_dropped_subjects.drop(columns=["_merge"], inplace=True)
 
 
 # ================================================================
-# 3. FLAG RECORDS FOR REMOVAL
+# 3. FLAG RECORDS FOR REMOVAL and reset index
 # ================================================================
 
 merged_inner["FLAG_REASON"] = pd.NA
@@ -591,12 +595,217 @@ merged_inner = append_flag_reason(
 
 
 # ----------------------------------------------------
+# FLAG NON-NUMERIC SS
+# ----------------------------------------------------
+# D_SS contains a value but could not be converted
+# to D_SS_CLEAN.
+
+non_numeric_ss_mask = (
+    merged_inner["D_SS"].notna()
+    & merged_inner["D_SS"].astype(str).str.strip().ne("")
+    & merged_inner["D_SS_CLEAN"].isna()
+)
+
+merged_inner = append_flag_reason(
+    merged_inner,
+    non_numeric_ss_mask,
+    "non_numeric_SS"
+)
+
+
+
+# ----------------------------------------------------
+# FLAG INCORRECT TERM
+# ----------------------------------------------------
+
+def is_incorrect_term(d_term, settings_term):
+    """
+    Flag if:
+      - term contains a year different from study year
+      - term explicitly indicates Fall/Summer/Winter
+
+    Do NOT flag:
+      - blanks
+      - unrecognized strings
+      - Spring without a year
+    """
+
+    if pd.isna(d_term) or pd.isna(settings_term):
+        return False
+
+    d_term = str(d_term).upper().strip()
+    settings_term = str(settings_term).strip()
+
+    # study year comes from SETTINGS_TERM (e.g. 202502)
+    m = re.match(r"^(\d{4})", settings_term)
+
+    if not m:
+        return False
+
+    study_year = int(m.group(1))
+
+    # --------------------------------------------------
+    # Explicit season detection
+    # --------------------------------------------------
+
+    spring_patterns = [
+        r"\bSPRING\b",
+        r"\bSPR\b",
+        r"\bSP\b",
+    ]
+
+    fall_patterns = [
+        r"\bFALL\b",
+        r"\bAUTUMN\b",
+        r"\bFA\b",
+        r"\bF\d{2}\b",
+    ]
+
+    summer_patterns = [
+        r"\bSUMMER\b",
+        r"\bSUM\b",
+        r"\bSU\b",
+    ]
+
+    winter_patterns = [
+        r"\bWINTER\b",
+        r"\bWIN\b",
+        r"\bWI\b",
+        r"\bW\d{2}\b",
+    ]
+
+    if any(re.search(p, d_term) for p in fall_patterns):
+        return True
+
+    if any(re.search(p, d_term) for p in summer_patterns):
+        return True
+
+    if any(re.search(p, d_term) for p in winter_patterns):
+        return True
+
+    # --------------------------------------------------
+    # YEAR DETECTION
+    # --------------------------------------------------
+
+    years_found = []
+
+    # 4-digit years
+    years_found.extend(
+        [
+            int(x)
+            for x in re.findall(r"\b20\d{2}\b", d_term)
+        ]
+    )
+
+    # embedded forms like SPR2025
+    years_found.extend(
+        [
+            int(x)
+            for x in re.findall(r"20\d{2}", d_term)
+        ]
+    )
+
+    # short forms like F25 / SP25 / W25
+    years_found.extend(
+        [
+            2000 + int(x)
+            for x in re.findall(r"(?<!\d)(\d{2})(?!\d)", d_term)
+            if 0 <= int(x) <= 50
+        ]
+    )
+
+    years_found = list(set(years_found))
+
+    if years_found:
+
+        if study_year not in years_found:
+
+            # allow school year notation such as 2024-25
+            if (
+                study_year in years_found
+                or study_year - 1 in years_found
+            ):
+                pass
+            else:
+                return True
+
+    return False
+
+
+incorrect_term_mask = [
+    is_incorrect_term(d_term, settings_term)
+    for d_term, settings_term in zip(
+        merged_inner["D_TERM"],
+        merged_inner["SETTINGS_TERM"]
+    )
+]
+
+merged_inner = append_flag_reason(
+    merged_inner,
+    incorrect_term_mask,
+    "incorrect_term"
+)
+
+
+
+# ----------------------------------------------------
+# FLAG TEST DATE OUT OF RANGE
+# ----------------------------------------------------
+
+def is_test_date_out_of_range(test_date, settings_term):
+
+    if pd.isna(test_date) or pd.isna(settings_term):
+        return False
+
+    try:
+        test_dt = pd.to_datetime(test_date)
+    except Exception:
+        return False
+
+    settings_term = str(settings_term).strip()
+
+    m = re.match(r"^(\d{4})", settings_term)
+
+    if not m:
+        return False
+
+    study_year = int(m.group(1))
+
+    valid_start = pd.Timestamp(study_year, 2, 1)
+    valid_end = pd.Timestamp(study_year, 6, 30)
+
+    return (
+        test_dt < valid_start
+        or test_dt > valid_end
+    )
+
+
+test_date_out_of_range_mask = [
+    is_test_date_out_of_range(test_date, settings_term)
+    for test_date, settings_term in zip(
+        merged_inner["D_TESTDATE_CLEAN"],
+        merged_inner["SETTINGS_TERM"]
+    )
+]
+
+merged_inner = append_flag_reason(
+    merged_inner,
+    test_date_out_of_range_mask,
+    "test_date_out_of_range"
+)
+
+
+
+
+
+# ----------------------------------------------------
 # CREATE FLAGGED FOR REMOVAL TABLE
 # ----------------------------------------------------
-flagged_for_removal = merged_inner.loc[
-    merged_inner["FLAG_REASON"].notna()
-].copy()
-
+flagged_for_removal = (merged_inner.loc[
+        merged_inner["FLAG_REASON"].notna()]
+            .copy()
+            .reset_index(drop = True)
+)
 # Move FLAG_REASON to first column
 if "FLAG_REASON" in flagged_for_removal.columns:
     flag_reason = flagged_for_removal.pop("FLAG_REASON")
@@ -609,10 +818,6 @@ if "FLAG_REASON" in flagged_for_removal.columns:
 merged_inner = merged_inner.loc[
     merged_inner["FLAG_REASON"].isna()
 ].copy()
-
-# TODO:  ADD LOGIC TO FLAG ANY GRADE THAT IS OUTSIDE RANGE OF 
-        #  ANY STUDY BASED ON THE SUBJECT.  EG. MATH GRADE 2
-        # NOT VALID FOR EITHER MAP 2-5 OR 6+ OR EOC STUDY.
 
 
 # ================================================================
@@ -629,7 +834,13 @@ merged_inner["GRADE_ALLOWED"] = merged_inner.apply(
 )
 
 # Valid rows
-merged_valid = merged_inner[merged_inner["GRADE_ALLOWED"]].copy()
+merged_valid = (
+    merged_inner[
+        merged_inner["GRADE_ALLOWED"]
+    ]
+    .copy()
+    .reset_index(drop=True)
+)
 
 
 # ================================================================
@@ -661,7 +872,7 @@ keep_cols = [
 merged_invalid = merged_inner.loc[
     ~merged_inner["GRADE_ALLOWED"],
     [c for c in keep_cols if c in merged_inner.columns]
-].copy()
+].copy().reset_index(drop=True)
 
 
 # flagged_for_removal = flagged_for_removal[
