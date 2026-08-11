@@ -168,38 +168,6 @@ df_long = rename_columns_upper_with_prefix(df_long)
 # JOINING TO REDUCE PARQUET OUTPUT
 #================================================================================================================
 
-#==============================================================
-# GLOBAL GRADE MAP (used for df_long + settings_xl)
-#==============================================================
-
-grade_map = {
-    1: ["1", "1ST", "ONE", "FIRST", "GRADE 1", "GRADE 01"],
-    2: ["2", "2ND", "TWO", "SECOND", "GRADE 2", "GRADE 02"],
-    3: ["3", "3RD", "THREE", "THIRD", "GRADE 3", "GRADE 03"],
-    4: ["4", "4TH", "FOUR", "FOURTH", "GRADE 4", "GRADE 04"],
-    5: ["5", "5TH", "FIVE", "FIFTH", "GRADE 5", "GRADE 05"],
-    6: ["6", "6TH", "SIX", "SIXTH", "GRADE 6", "GRADE 06"],
-    7: ["7", "7TH", "SEVEN", "SEVENTH", "GRADE 7", "GRADE 07"],
-    8: ["8", "8TH", "EIGHT", "EIGHTH", "GRADE 8", "GRADE 08"],
-    9: ["9", "9TH", "NINE", "NINTH", "GRADE 9", "GRADE 09"],
-    10: ["10", "10TH", "TEN", "TENTH", "GRADE 10"],
-    11: ["11", "11TH", "ELEVEN", "ELEVENTH", "GRADE 11"],
-    12: ["12", "12TH", "TWELVE", "TWELFTH", "GRADE 12"],
-    # skip 13
-    14: ["K", "KINDERGARTEN", "GRADE K"],
-}
-
-
-reverse_map = {}
-for num, variants in grade_map.items():
-    for v in variants:
-        reverse_map[v] = num
-        
-        
-#TODO: add to qa checks early.  and check D_GRADE VS D_GRADE_CLEAN
-df_long.D_GRADE.value_counts(dropna = False)
-
-
 
 
 #-----------------------------------------------------------------
@@ -254,6 +222,142 @@ def append_flag_reason(df, mask, reason):
     )
 
     return df
+
+
+#==============================================================
+# GLOBAL GRADE MAP (used for df_long + settings_xl)
+#==============================================================
+
+import re
+import pandas as pd
+
+grade_map = {
+    1: ["1", "1ST", "ONE", "FIRST", "GRADE 1", "GRADE 01"],
+    2: ["2", "2ND", "TWO", "SECOND", "GRADE 2", "GRADE 02"],
+    3: ["3", "3RD", "THREE", "THIRD", "GRADE 3", "GRADE 03"],
+    4: ["4", "4TH", "FOUR", "FOURTH", "GRADE 4", "GRADE 04"],
+    5: ["5", "5TH", "FIVE", "FIFTH", "GRADE 5", "GRADE 05"],
+    6: ["6", "6TH", "SIX", "SIXTH", "GRADE 6", "GRADE 06"],
+    7: ["7", "7TH", "SEVEN", "SEVENTH", "GRADE 7", "GRADE 07"],
+    8: ["8", "8TH", "EIGHT", "EIGHTH", "GRADE 8", "GRADE 08"],
+    9: ["9", "9TH", "NINE", "NINTH", "GRADE 9", "GRADE 09"],
+    10: ["10", "10TH", "TEN", "TENTH", "GRADE 10"],
+    11: ["11", "11TH", "ELEVEN", "ELEVENTH", "GRADE 11"],
+    12: ["12", "12TH", "TWELVE", "TWELFTH", "GRADE 12"],
+    # skip 13
+    14: ["K", "KINDERGARTEN", "GRADE K"],
+}
+
+
+#==============================================================
+# BUILD NORMALIZED LOOKUP MAP
+#==============================================================
+
+def normalize_grade_text(value):
+    """
+    Standardize grade text for matching.
+
+    Examples:
+        ' Grade 04 '  -> 'GRADE04'
+        'grade    4'  -> 'GRADE4'
+        'Grade\t4'    -> 'GRADE4'
+        ' fourth '    -> 'FOURTH'
+    """
+    s = str(value).strip().upper()
+
+    # remove ALL whitespace
+    s = re.sub(r"\s+", "", s)
+
+    return s
+
+
+reverse_map = {}
+
+for grade_num, variants in grade_map.items():
+    for variant in variants:
+        reverse_map[normalize_grade_text(variant)] = grade_num
+
+
+#==============================================================
+# CLEAN GRADE COLUMN
+#==============================================================
+
+def add_clean_grade_column(df: pd.DataFrame, col: str):
+    df = df.copy()
+    clean_col = f"{col}_CLEAN"
+
+    def clean_grade(raw):
+
+        #--------------------------------------
+        # Null handling
+        #--------------------------------------
+        if pd.isna(raw):
+            return pd.NA
+
+        s_raw = str(raw).strip()
+        s_norm = normalize_grade_text(raw)
+
+        #--------------------------------------
+        # Numeric conversion first
+        #
+        # Handles:
+        #   4
+        #   4.0
+        #   "4"
+        #   "04"
+        #   "004"
+        #   "4.0"
+        #--------------------------------------
+        try:
+            num = float(s_raw)
+
+            if num.is_integer():
+                num = int(num)
+
+                if num in grade_map:
+                    return num
+
+        except (ValueError, TypeError):
+            pass
+
+        #--------------------------------------
+        # Text lookup second
+        #
+        # Handles:
+        #   GRADE4
+        #   GRADE 4
+        #   GRADE    04
+        #   FOURTH
+        #   KINDERGARTEN
+        #   K
+        #--------------------------------------
+        return reverse_map.get(s_norm, pd.NA)
+
+    df[clean_col] = (
+        df[col]
+        .apply(clean_grade)
+        .astype("Int64")
+    )
+
+    return df, df[clean_col].tolist()
+
+
+#==============================================================
+# APPLY
+#==============================================================
+# TODO: add to QA checks early and compare D_GRADE vs D_GRADE_CLEAN
+
+df_long.D_GRADE.value_counts(dropna=False)
+
+df_long, cleaned = add_clean_grade_column(df_long, "D_GRADE")
+
+print(df_long[["D_GRADE", "D_GRADE_CLEAN"]
+              ].drop_duplicates().sort_values(["D_GRADE"])
+
+)
+
+
+
 
 
 #==============================================================
@@ -390,38 +494,6 @@ def add_clean_date_columns(df: pd.DataFrame, date_cols: list) -> pd.DataFrame:
 df_long = add_clean_date_columns(df_long, ["D_TESTDATE", "D_DOB"])
 
 
-#==============================================================
-# CLEAN GRADE COLUMN
-#==============================================================
-
-def add_clean_grade_column(df: pd.DataFrame, col: str) -> pd.DataFrame:
-    df = df.copy()
-    clean_col = f"{col}_CLEAN"
-
-    cleaned = []
-    for raw in df[col]:
-        if raw is None or pd.isna(raw):
-            cleaned.append(pd.NA)
-            continue
-
-        s = str(raw).strip().upper()
-        cleaned.append(reverse_map.get(s, pd.NA))
-
-    # df[clean_col] = pd.Series(cleaned, dtype="Int64")
-    df[clean_col] = cleaned
-    df[clean_col] = df[clean_col].astype("Int64")
-    return df, cleaned
-
-
-df_long, cleaned = add_clean_grade_column(df_long, "D_GRADE")
-
-print(
-    df_long[
-        ["D_GRADE", "D_GRADE_CLEAN"]
-    ]
-    .drop_duplicates()
-    .sort_values(["D_GRADE"])
-)
 
 
 
