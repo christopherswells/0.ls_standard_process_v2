@@ -128,11 +128,16 @@ for reason, df_reason in flagged_for_removal.groupby(
             "SETTINGS_TERM"
         ])
 
-    # Keep only columns that exist
+       # Keep only columns that exist
     group_cols = [
         c for c in group_cols
         if c in df_reason.columns
     ]
+
+    # Remove duplicate grouping columns while preserving order.
+    # This prevents errors like:
+    # ValueError: cannot insert SETTINGS_TERM, already exists
+    group_cols = list(dict.fromkeys(group_cols))
 
     temp = (
         df_reason
