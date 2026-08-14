@@ -13,3 +13,6 @@ __pycache__/
 pycode/V1/
 documentation/
 sql/
+
+# archived files
+common/boneyard/
