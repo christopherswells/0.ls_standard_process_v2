@@ -67,21 +67,21 @@ SCHEMA = 'LINKING_STUDIES'
 
 
 # ------ WI2025 ---------
-# TERM_NUMBER = '202502'      # TERM OF DATA
-# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-# STATE_NAME = 'WISCONSIN' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-# STATE_ABR = 'WI'
-# DATA_YEAR = TERM_NUMBER[:4] 
-# SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
+TERM_NUMBER = '202502'      # TERM OF DATA
+STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+STATE_NAME = 'WISCONSIN' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+STATE_ABR = 'WI'
+DATA_YEAR = TERM_NUMBER[:4] 
+SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 
 
 # ------ TX2026 ---------
-TERM_NUMBER = '202602'      # TERM OF DATA
-STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-STATE_NAME = 'TEXAS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-STATE_ABR = 'TX'
-DATA_YEAR = TERM_NUMBER[:4] 
-SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
+# TERM_NUMBER = '202602'      # TERM OF DATA
+# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+# STATE_NAME = 'TEXAS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+# STATE_ABR = 'TX'
+# DATA_YEAR = TERM_NUMBER[:4] 
+# SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 
 
 #------ COLORADO-------
@@ -98,6 +98,15 @@ SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 # STATE_NAME = 'UTAH' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
 # STATE_ABR = 'UT'
 # DATA_YEAR = TERM_NUMBER[:4] 
+
+
+#------ NEBRASKA -------
+# TERM_NUMBER = '202602'      # TERM OF DATA
+# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+# STATE_NAME = 'NEBRASKA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+# STATE_ABR = 'NE'
+# DATA_YEAR = TERM_NUMBER[:4] 
+
 
 
 #tx
@@ -280,7 +289,7 @@ if settings_xl is not None and not settings_xl.empty:
 # just subject codes to explore.
 #========================================================
 # SUBJECTS = [1, 2, 4, 100, 101, 102, 108]  #SC 2025
-# MAP_SUBJECT_CODES = [1,2,4] #IL
+map_subject_codes = [1,2,4] #NE
 
    
 
@@ -317,14 +326,9 @@ NWEA’s numeric subject code:
 # Content areas and grades to include in study 
 # also alignmnet, section 3 for full test names.
 #=====================================================
-# MAP_TEST_NAMES = [
-#             'Growth: Math 2-5 CCSS 2010 1.1'
-#             ,'Growth: Math 6+ CCSS 2010 1.1'
-#             ,'Growth: Reading 2-5 CCSS 2010 1.1'
-#             ,'Growth: Reading 6+ CCSS 2010 1.1'
-#             ,'Growth: Science 2-5: for use with NGSS 2013 1.1'
-#             ,'Growth: Science 6-8: for use with NGSS 2013 1.1'  
-#     ]
+# MAP_TEST_NAMES = [             
+                    
+    # ]
 
 
 
