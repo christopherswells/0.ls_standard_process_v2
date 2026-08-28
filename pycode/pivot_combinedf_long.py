@@ -140,16 +140,44 @@ else:
     df_wide = _normalize_strings(df_wide)
 
 # ---------------------------------------------------------
-# Pivot wide → long
+# Pivot1:   wide → long
+#
+# this pivot only keeps if ss is populated
+# TX, eg., has records where one score is needed only--
+# sometimes in SS other times in plcode, pldesc
 # ---------------------------------------------------------
+
+# df_long = pivot_scores_long_no_impute(
+#     df_wide,
+#     drop_rows_missing_ss=True,
+#     drop_rows_all_scores_missing=True
+# )
+
+# df_long = df_long.reset_index(drop=True)
+
+
+#---------------------------------------------------------
+#
+# PIVOT2:  KEEP ANY RECORDS WITH ONE OF THE SS/PLCODE/PLDESC
+# NON-NULL 
+# TODO: AND NOT (N/A, --, ETC.)
+#---------------------------------------------------------
 
 df_long = pivot_scores_long_no_impute(
     df_wide,
-    drop_rows_missing_ss=True,
-    drop_rows_all_scores_missing=True
+    drop_rows_missing_ss=False,      # don't let the function drop SS-missing rows
+    drop_rows_all_scores_missing=False
 )
 
-df_long = df_long.reset_index(drop=True)
+# Keep rows where at least one of SS, PLCODE, PLDESC, or PL is populated
+score_cols = [c for c in ['SS', 'PLCODE', 'PLDESC', 'PL'] if c in df_long.columns]
+
+df_long = df_long.loc[
+    df_long[score_cols].notna().any(axis=1)
+].reset_index(drop=True)
+
+
+
 
 # ---------------------------------------------------------
 # Rename long columns with prefix (already uppercase)
