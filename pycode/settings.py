@@ -56,14 +56,14 @@ SCHEMA = 'LINKING_STUDIES'
 #             ,"SS_CONVERTED","SS_UNCONVERTED"]
 
 # ------ PA2026 ---------
-# TERM_NUMBER = '202502'      # TERM OF DATA
-# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-# STATE_NAME = 'PENNSYLVANIA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-# STATE_ABR = 'PA'
-# DATA_YEAR = TERM_NUMBER[:4] 
-# SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
+TERM_NUMBER = '202502'      # TERM OF DATA
+STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+STATE_NAME = 'PENNSYLVANIA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+STATE_ABR = 'PA'
+DATA_YEAR = TERM_NUMBER[:4] 
+SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 
-# map_subject_codes = [1, 2, 100]  # for initial MAP counts
+map_subject_codes = [1, 2, 100]  # for initial MAP counts
 
 
 # ------ WI2025 ---------
@@ -76,12 +76,12 @@ SCHEMA = 'LINKING_STUDIES'
 
 
 # ------ TX2026 ---------
-TERM_NUMBER = '202602'      # TERM OF DATA
-STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-STATE_NAME = 'TEXAS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-STATE_ABR = 'TX'
-DATA_YEAR = TERM_NUMBER[:4] 
-SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
+# TERM_NUMBER = '202602'      # TERM OF DATA
+# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+# STATE_NAME = 'TEXAS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+# STATE_ABR = 'TX'
+# DATA_YEAR = TERM_NUMBER[:4] 
+# SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 
 
 #------ COLORADO-------

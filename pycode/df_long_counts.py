@@ -53,6 +53,42 @@ missing_long_by_file_only = missingness_long(
     group_cols=["D_FILENAMEFROMDISTRICT"]
 )
 
+# ----------------------------------------------------
+# REMOVE UNWANTED COLUMNS FROM LONG MISSINGNESS REPORTS
+# ----------------------------------------------------
+cols_to_remove = [
+    c
+    for c in missing_long_by_file_only.columns
+    if c == "DMNAME"
+    or c == "FLAG_REASON"
+    or c.startswith("SETTINGS_")
+]
+
+missing_long_by_file_only = missing_long_by_file_only.drop(
+    columns=cols_to_remove,
+    errors="ignore"
+)
+
+missing_long_by_grade_and_file = missing_long_by_grade_and_file.drop(
+    columns=cols_to_remove,
+    errors="ignore"
+)
+
+# ----------------------------------------------------
+# FLAGGED LONG MISSINGNESS (>5%)
+# ----------------------------------------------------
+missing_long_flagged = (
+    missing_long_by_file_only
+    .loc[
+        missing_long_by_file_only["missing_percentage"] > 5
+    ]
+    .sort_values(
+        ["D_FILENAMEFROMDISTRICT", "missing_percentage"],
+        ascending=[True, False]
+    )
+    .copy()
+)
+
 
 # ----------------------------------------------------
 # COUNTS SUBJECT
@@ -77,6 +113,50 @@ counts_subject_grade = (
     .rename("record_count")
     .reset_index()
     .sort_values(["D_GRADE_CLEAN", "D_SUBJECT"])
+)
+
+
+# ----------------------------------------------------
+# COUNTS DISTRICT / SUBJECT
+# ----------------------------------------------------
+counts_by_district_subject = (
+    df_long
+    .groupby(
+        ["D_FILENAMEFROMDISTRICT", "D_SUBJECT"],
+        dropna=False
+    )
+    .size()
+    .rename("record_count")
+    .reset_index()
+    .sort_values(
+        ["D_FILENAMEFROMDISTRICT", "D_SUBJECT"]
+    )
+)
+
+
+# ----------------------------------------------------
+# COUNTS DISTRICT / SUBJECT / GRADE
+# ----------------------------------------------------
+counts_by_district_subject_grade = (
+    df_long
+    .groupby(
+        [
+            "D_FILENAMEFROMDISTRICT",
+            "D_SUBJECT",
+            "D_GRADE_CLEAN"
+        ],
+        dropna=False
+    )
+    .size()
+    .rename("record_count")
+    .reset_index()
+    .sort_values(
+        [
+            "D_FILENAMEFROMDISTRICT",
+            "D_SUBJECT",
+            "D_GRADE_CLEAN"
+        ]
+    )
 )
 
 
@@ -128,15 +208,13 @@ for reason, df_reason in flagged_for_removal.groupby(
             "SETTINGS_TERM"
         ])
 
-       # Keep only columns that exist
+    # Keep only columns that exist
     group_cols = [
         c for c in group_cols
         if c in df_reason.columns
     ]
 
-    # Remove duplicate grouping columns while preserving order.
-    # This prevents errors like:
-    # ValueError: cannot insert SETTINGS_TERM, already exists
+    # Remove duplicate grouping columns while preserving order
     group_cols = list(dict.fromkeys(group_cols))
 
     temp = (
@@ -158,9 +236,7 @@ flagged_for_removal_summary = pd.concat(
 
 # ----------------------------------------------------
 # TOTAL PARTNER RECORDS BY FILE / SUBJECT
-# (used as denominator for percentages)
 # ----------------------------------------------------
-
 subject_totals = (
     df_long
     .groupby(
@@ -179,7 +255,6 @@ subject_totals = (
 # ----------------------------------------------------
 # ADD TOTALS AND PERCENTAGES
 # ----------------------------------------------------
-
 flagged_for_removal_summary = (
     flagged_for_removal_summary
     .merge(
@@ -207,7 +282,6 @@ flagged_for_removal_summary["pct_affected_records"] = (
 # ----------------------------------------------------
 # PLACE TOTAL / COUNT / PCT TOGETHER
 # ----------------------------------------------------
-
 base_cols = [
     c for c in flagged_for_removal_summary.columns
     if c not in [
@@ -230,7 +304,6 @@ flagged_for_removal_summary = flagged_for_removal_summary[
 # ----------------------------------------------------
 # SORT FOR READABILITY
 # ----------------------------------------------------
-
 sort_cols = [
     c for c in [
         "FLAG_REASON",
@@ -250,7 +323,6 @@ flagged_for_removal_summary = (
 # ----------------------------------------------------
 # OUTPUT COUNTS AND QA
 # ----------------------------------------------------
-
 def move_col_to_end(df: pd.DataFrame, col: str) -> pd.DataFrame:
     """
     Move a column to the end of the dataframe if present.
@@ -263,13 +335,27 @@ def move_col_to_end(df: pd.DataFrame, col: str) -> pd.DataFrame:
 
 
 summaries = {
-    "missing_wide_by_file_only": missing_by_file_only,
-    "missing_wide_by_grade_and_file": missing_by_grade_and_file,
-    "missing_long_by_file_only": missing_long_by_file_only,
-    "missing_long_by_grade_and_file": missing_long_by_grade_and_file,
+    # ------------------------------------------------
+    # PRIORITY OUTPUTS
+    # ------------------------------------------------
+    "flagged_for_removal_summary": flagged_for_removal_summary,
     "counts_subject": counts_subject,
     "counts_subject_grade": counts_subject_grade,
-    "flagged_for_removal_summary": flagged_for_removal_summary,
+    "counts_by_district_subject": counts_by_district_subject,
+    "counts_by_district_subject_grade": counts_by_district_subject_grade,
+    "missing_long_flagged": missing_long_flagged,
+
+    # ------------------------------------------------
+    # LONG MISSINGNESS
+    # ------------------------------------------------
+    "missing_long_by_file_only": missing_long_by_file_only,
+    "missing_long_by_grade_and_file": missing_long_by_grade_and_file,
+
+    # ------------------------------------------------
+    # WIDE MISSINGNESS
+    # ------------------------------------------------
+    "missing_wide_by_file_only": missing_by_file_only,
+    "missing_wide_by_grade_and_file": missing_by_grade_and_file,
 }
 
 
