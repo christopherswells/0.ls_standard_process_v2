@@ -15,4 +15,5 @@ documentation/
 sql/
 
 # archived files
-common/boneyard/
+boneyard/
+

@@ -54,25 +54,54 @@ missing_long_by_file_only = missingness_long(
 )
 
 # ----------------------------------------------------
-# REMOVE UNWANTED COLUMNS FROM LONG MISSINGNESS REPORTS
+# REMOVE UNWANTED RECORDS FROM LONG MISSINGNESS REPORTS
 # ----------------------------------------------------
-cols_to_remove = [
-    c
-    for c in missing_long_by_file_only.columns
-    if c == "DMNAME"
-    or c == "FLAG_REASON"
-    or c.startswith("SETTINGS_")
-]
+def remove_unwanted_long_missingness_rows(
+    df: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Remove missingness records where col_name:
+      - equals D_MNAME
+      - equals FLAG_REASON
+      - starts with SETTINGS
+    """
+    col_name_clean = (
+        df["col_name"]
+        .astype("string")
+        .str.strip()
+        .str.upper()
+    )
 
-missing_long_by_file_only = missing_long_by_file_only.drop(
-    columns=cols_to_remove,
-    errors="ignore"
+    unwanted_mask = (
+        col_name_clean.isin([
+            "D_MNAME",
+            "FLAG_REASON",
+        ])
+        | col_name_clean.str.startswith(
+            "SETTINGS",
+            na=False
+        )
+    )
+
+    return (
+        df.loc[~unwanted_mask]
+        .copy()
+        .reset_index(drop=True)
+    )
+
+
+missing_long_by_file_only = (
+    remove_unwanted_long_missingness_rows(
+        missing_long_by_file_only
+    )
 )
 
-missing_long_by_grade_and_file = missing_long_by_grade_and_file.drop(
-    columns=cols_to_remove,
-    errors="ignore"
+missing_long_by_grade_and_file = (
+    remove_unwanted_long_missingness_rows(
+        missing_long_by_grade_and_file
+    )
 )
+
 
 # ----------------------------------------------------
 # FLAGGED LONG MISSINGNESS (>5%)
@@ -83,10 +112,14 @@ missing_long_flagged = (
         missing_long_by_file_only["missing_percentage"] > 5
     ]
     .sort_values(
-        ["D_FILENAMEFROMDISTRICT", "missing_percentage"],
+        [
+            "D_FILENAMEFROMDISTRICT",
+            "missing_percentage",
+        ],
         ascending=[True, False]
     )
     .copy()
+    .reset_index(drop=True)
 )
 
 
@@ -119,7 +152,7 @@ counts_subject_grade = (
 # ----------------------------------------------------
 # COUNTS DISTRICT / SUBJECT
 # ----------------------------------------------------
-counts_by_district_subject = (
+counts_by_district = (
     df_long
     .groupby(
         ["D_FILENAMEFROMDISTRICT", "D_SUBJECT"],
@@ -137,7 +170,7 @@ counts_by_district_subject = (
 # ----------------------------------------------------
 # COUNTS DISTRICT / SUBJECT / GRADE
 # ----------------------------------------------------
-counts_by_district_subject_grade = (
+counts_by_district_grade = (
     df_long
     .groupby(
         [
@@ -317,6 +350,7 @@ flagged_for_removal_summary = (
     flagged_for_removal_summary
     .sort_values(sort_cols)
     .reset_index(drop=True)
+
 )
 
 
@@ -339,17 +373,23 @@ summaries = {
     # PRIORITY OUTPUTS
     # ------------------------------------------------
     "flagged_for_removal_summary": flagged_for_removal_summary,
+    "missing_long_flagged": missing_long_flagged,
+       
+    
+    #-------------------------------------------------
+    # Counts
+    #-------------------------------------------------
     "counts_subject": counts_subject,
     "counts_subject_grade": counts_subject_grade,
-    "counts_by_district_subject": counts_by_district_subject,
-    "counts_by_district_subject_grade": counts_by_district_subject_grade,
-    "missing_long_flagged": missing_long_flagged,
-
+    "counts_by_district": counts_by_district,
+    "counts_by_district_grade": counts_by_district_grade,
+    
     # ------------------------------------------------
     # LONG MISSINGNESS
     # ------------------------------------------------
     "missing_long_by_file_only": missing_long_by_file_only,
     "missing_long_by_grade_and_file": missing_long_by_grade_and_file,
+    
 
     # ------------------------------------------------
     # WIDE MISSINGNESS
