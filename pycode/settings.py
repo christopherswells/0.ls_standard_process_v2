@@ -76,12 +76,12 @@ SCHEMA = 'LINKING_STUDIES'
 
 
 # ------ TX2026 ---------
-# TERM_NUMBER = '202602'      # TERM OF DATA
-# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-# STATE_NAME = 'TEXAS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-# STATE_ABR = 'TX'
-# DATA_YEAR = TERM_NUMBER[:4] 
-# SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
+TERM_NUMBER = '202602'      # TERM OF DATA
+STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+STATE_NAME = 'TEXAS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+STATE_ABR = 'TX'
+DATA_YEAR = TERM_NUMBER[:4] 
+SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 
 
 #------ COLORADO-------
@@ -101,19 +101,19 @@ SCHEMA = 'LINKING_STUDIES'
 
 
 #------ NEBRASKA -------
-TERM_NUMBER = '202602'      # TERM OF DATA
-STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-STATE_NAME = 'NEBRASKA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-STATE_ABR = 'NE'
-DATA_YEAR = TERM_NUMBER[:4] 
-map_subject_codes = [1,2,4]
-map_test_names = ['Growth: Math 2-5 NE 2022 1.1',
-'Growth: Math 6+ NE 2022 1.1',
-'Growth: Reading 2-5 NE 2021 1.1',
-'Growth: Reading 6+ NE 2021 1.1',
-'Growth: Science 6-8 NE 2024 1.1',
-'Growth: Science 2-5 NE 2024 1.1'
-]
+# TERM_NUMBER = '202602'      # TERM OF DATA
+# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+# STATE_NAME = 'NEBRASKA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+# STATE_ABR = 'NE'
+# DATA_YEAR = TERM_NUMBER[:4] 
+# map_subject_codes = [1,2,4]
+# map_test_names = ['Growth: Math 2-5 NE 2022 1.1',
+# 'Growth: Math 6+ NE 2022 1.1',
+# 'Growth: Reading 2-5 NE 2021 1.1',
+# 'Growth: Reading 6+ NE 2021 1.1',
+# 'Growth: Science 6-8 NE 2024 1.1',
+# 'Growth: Science 2-5 NE 2024 1.1'
+# ]
 
 #------ INDIANA -------
 # TERM_NUMBER = '202602'      # TERM OF DATA
