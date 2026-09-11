@@ -1,645 +1,308 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Tue May 12 16:42:53 2026
+"""Incrementally route partner files from ORIGINAL_FILES to WORKING_FILES."""
+from __future__ import annotations
 
-@author: Chris.Wells
-
-parse_district_data_files
-
-parse_district_data_files + logging + edited_ handling in REJECTED_FILES
-
-Enhancements:
-- Log every file found in ORIGINAL_FILES regardless of extension
-- Attempt to read as Excel or CSV; if unreadable, log only original_file + date_ingested
-- Do not scan EDITED_FILES folder
-- Promote edited_ files found in REJECTED_FILES into WORKING_FILES (keeping edited_ prefix)
-- Update log STATUS to EDITED for the original filename (prefix removed)
-"""
-# -*- coding: utf-8 -*-
-"""
-parse_district_data_files + logging + edited_ handling in REJECTED_FILES
-
-Enhancements:
-- Log every file found in ORIGINAL_FILES regardless of extension
-- Attempt to read as Excel or CSV; if unreadable, log only original_file + date_ingested
-- Do not scan EDITED_FILES folder
-- Promote edited_ files found in REJECTED_FILES into WORKING_FILES (keeping edited_ prefix)
-- Update log STATUS to EDITED for the original filename (prefix removed)
-"""
-
+from datetime import date
 from pathlib import Path
 import re
 import shutil
-import pandas as pd
 from typing import Optional
-from datetime import date
 
-from pycode.settings import *
+import pandas as pd
 
-# TODO: switch above settings line to below. then use eg. settings.DATA_LOG
-# to make the source of DATA_LOG and other settings explicit
-# import pycode.settings as settings
+try:
+    from pycode.settings import *
+except ModuleNotFoundError:
+    # Allows the script to run when launched directly from the pycode folder.
+    from settings import *
 
-
-# =========================
-# CONFIG
-# =========================
-# _FILES = globals().get("_FILES", ORIGINAL_FILES.parent / "district_ingest_log.xlsx")
-
-LOG_COLUMNS = [
-    "original_file",        # name of file from ORIGINAL_FILES
-    "date_ingested",        # today's date (on first log insert only)
-    "non_blank_records",    # count rows not fully blank
-    "STATUS",               # WORKING_FILES / REJECTED_FILES / EDITED (or missing)
-    "notes",                # expected vs received columns
-    "notes2",               # blank
-]
+REJECTED_PREFIX = "REJECTED_"
+EDITED_PREFIX = "EDITED_"
+METADATA_COLUMNS = ("filenameFromDistrict", "agency_code")
+LOG_COLUMNS = ["original_file", "date_received", "working_date",
+               "non_blank_records", "STATUS", "notes", "notes2"]
+LEGACY_DATE_COLUMN = "date_ingested"
 
 
-# =========================
-# Helpers
-# =========================
-
-def ensure_dirs(*dirs: Path) -> None:
-    """Create directories if missing."""
-    for d in dirs:
-        d.mkdir(parents=True, exist_ok=True)
+def ensure_dirs(*folders: Path) -> None:
+    for folder in folders:
+        folder.mkdir(parents=True, exist_ok=True)
 
 
-def list_filenames_lower(directory: Path) -> set:
-    """Return a set of filenames (lowercased) in directory (non-recursive)."""
-    if not directory.exists():
-        return set()
-    return {p.name.lower() for p in directory.iterdir() if p.is_file()}
-
-
-def read_as_excel(path: Path) -> pd.DataFrame:
-    """Try reading as Excel (first sheet)."""
+def read_excel(path: Path) -> pd.DataFrame:
     return pd.read_excel(path, dtype=str, sheet_name=0, engine="openpyxl")
 
 
-def read_as_csv(path: Path) -> pd.DataFrame:
-    """Try reading as CSV with a few encodings."""
-    for enc in ("utf-8-sig", "utf-8", "cp1252"):
+def read_csv(path: Path) -> pd.DataFrame:
+    for encoding in ("utf-8-sig", "utf-8", "cp1252"):
         try:
-            return pd.read_csv(path, dtype=str, encoding=enc)
+            return pd.read_csv(path, dtype=str, encoding=encoding)
         except UnicodeDecodeError:
             continue
     return pd.read_csv(path, dtype=str, encoding_errors="replace")
 
 
-def read_any_file_loose(path: Path) -> pd.DataFrame:
-    """
-    Attempt to read ANY file as Excel or CSV.
-    - If suffix is .xlsx -> try Excel first then CSV
-    - If suffix is .csv  -> try CSV first then Excel
-    - Otherwise          -> try Excel then CSV
-    Raises the last exception if neither works.
-    """
-    suffix = path.suffix.lower()
-
+def read_file(path: Path) -> pd.DataFrame:
+    readers = (read_csv, read_excel) if path.suffix.lower() == ".csv" else (read_excel, read_csv)
     errors = []
-    if suffix == ".csv":
-        for fn in (read_as_csv, read_as_excel):
-            try:
-                return fn(path)
-            except Exception as e:
-                errors.append(e)
-    elif suffix == ".xlsx":
-        for fn in (read_as_excel, read_as_csv):
-            try:
-                return fn(path)
-            except Exception as e:
-                errors.append(e)
-    else:
-        for fn in (read_as_excel, read_as_csv):
-            try:
-                return fn(path)
-            except Exception as e:
-                errors.append(e)
-
-    # Neither worked
-    raise errors[-1] if errors else ValueError("Unknown read error")
+    for reader in readers:
+        try:
+            return reader(path)
+        except Exception as exc:
+            errors.append(exc)
+    raise errors[-1]
 
 
-def write_any_file(df: pd.DataFrame, out_path: Path) -> Path:
-    """Write DataFrame back as CSV/XLSX based on output extension."""
-    suffix = out_path.suffix.lower()
-
-    if suffix == ".csv":
-        df.to_csv(out_path, index=False)
-        return out_path
-
-    if suffix == ".xlsx":
-        df.to_excel(out_path, index=False, engine="openpyxl", na_rep="")
-        return out_path
-
-    # If downstream wants the same filename but it's a weird extension, default to .xlsx
-    out_path_xlsx = out_path.with_suffix(".xlsx")
-    df.to_excel(out_path_xlsx, index=False, engine="openpyxl", na_rep="")
-    return out_path_xlsx
+def write_file(df: pd.DataFrame, path: Path) -> Path:
+    if path.suffix.lower() == ".csv":
+        df.to_csv(path, index=False)
+        return path
+    output = path if path.suffix.lower() == ".xlsx" else path.with_suffix(".xlsx")
+    df.to_excel(output, index=False, engine="openpyxl", na_rep="")
+    return output
 
 
 def extract_agency_code(filename: str) -> Optional[str]:
-    """
-    NO fallback.
-    Only accept digits as the final token before the extension
-    preceded by a separator (space/underscore/hyphen).
-    Works for .xlsx or .csv (case-insensitive).
-    """
-    m = re.search(r"(?:^|[ _-])(\d+)(?=\.(xlsx|csv)$)", filename, flags=re.IGNORECASE)
-    return m.group(1) if m else None
+    match = re.search(r"(?:^|[ _-])(\d+)(?=\.(?:xlsx|csv)$)", filename, re.IGNORECASE)
+    return match.group(1) if match else None
 
 
-def add_required_columns(df: pd.DataFrame, filename: str) -> pd.DataFrame:
-    """
-    Add:
-      - filenameFromDistrict
-      - agency_code (string dtype; missing if not parsed)
-    """
-    df2 = df.copy()
-    df2["filenameFromDistrict"] = filename
-
-    code = extract_agency_code(filename)
-    df2["agency_code"] = pd.Series(code, index=df2.index, dtype="string")
-
-    return df2
+def original_filename(filename: str) -> str:
+    value = str(filename)
+    while re.match(r"^_*(?:REJECTED_|EDITED_)", value, re.IGNORECASE):
+        value = re.sub(r"^_*(?:REJECTED_|EDITED_)", "", value,
+                       count=1, flags=re.IGNORECASE)
+    return value
 
 
-def template_column_count(template_path: Path) -> int:
-    """Read template and return number of columns."""
-    tmpl_df = read_any_file_loose(template_path)
-    return int(tmpl_df.shape[1])
+def has_status(filename: str, prefix: str) -> bool:
+    return bool(re.match(rf"^_*{re.escape(prefix)}", str(filename), re.IGNORECASE))
 
 
-def count_nonblank_records(df: pd.DataFrame) -> int:
-    """
-    Count rows that are not completely blank.
-    Treat empty strings / whitespace as blank.
-    """
-    tmp = df.replace(r"^\s*$", pd.NA, regex=True)
-    return int(tmp.dropna(how="all").shape[0])
+def is_edited_lifecycle(filename: str) -> bool:
+    return bool(re.match(r"^_*(?:REJECTED_)?EDITED_", str(filename), re.IGNORECASE))
 
 
-def load_or_create_log(log_path: Path) -> pd.DataFrame:
-    """Load log if exists; otherwise create empty log with required columns."""
-    if log_path.exists():
+def rejected_filename(filename: str) -> str:
+    base = original_filename(filename)
+    return (REJECTED_PREFIX + EDITED_PREFIX + base
+            if is_edited_lifecycle(filename)
+            else REJECTED_PREFIX + base)
+
+
+def edited_filename(filename: str) -> str:
+    return EDITED_PREFIX + original_filename(filename)
+
+
+def source_columns(df: pd.DataFrame) -> list:
+    metadata = {column.lower() for column in METADATA_COLUMNS}
+    return [column for column in df.columns if str(column).lower() not in metadata]
+
+
+def source_only(df: pd.DataFrame) -> pd.DataFrame:
+    return df.loc[:, source_columns(df)].copy()
+
+
+def partner_column_count(df: pd.DataFrame) -> int:
+    return len(source_columns(df))
+
+
+def nonblank_record_count(df: pd.DataFrame) -> int:
+    cleaned = source_only(df).replace(r"^\s*$", pd.NA, regex=True)
+    return int(cleaned.dropna(how="all").shape[0])
+
+
+def add_metadata(df: pd.DataFrame, original_name: str) -> pd.DataFrame:
+    output = source_only(df)
+    output["filenameFromDistrict"] = original_name
+    output["agency_code"] = pd.Series(
+        extract_agency_code(original_name), index=output.index, dtype="string")
+    return output
+
+
+def same_path(left: Path, right: Path) -> bool:
+    return str(left.resolve()).lower() == str(right.resolve()).lower()
+
+
+def remove_conflict(target: Path, current: Optional[Path] = None) -> None:
+    for item in target.parent.iterdir():
+        if not item.is_file():
+            continue
+        if current is not None and same_path(item, current):
+            continue
+        if item.name.lower() == target.name.lower():
+            item.unlink()
+
+
+def rename_working(source: Path, new_name: str) -> Path:
+    target = source.with_name(new_name)
+    if source.name == target.name:
+        return source
+    remove_conflict(target, current=source)
+    if same_path(source, target):
+        counter = 0
+        while True:
+            suffix = "" if counter == 0 else f"_{counter}"
+            temporary = source.with_name(f"__tmp_case_change__{suffix}_{source.name}")
+            if not temporary.exists():
+                break
+            counter += 1
+        source.replace(temporary)
         try:
-            log_df = pd.read_excel(log_path, dtype="string", engine="openpyxl")
+            temporary.replace(target)
         except Exception:
-            raise RuntimeError(f"Could not read log file: {log_path}. Is it open or corrupted?")
+            if temporary.exists() and not source.exists():
+                temporary.replace(source)
+            raise
     else:
-        log_df = pd.DataFrame(columns=LOG_COLUMNS)
-
-    for c in LOG_COLUMNS:
-        if c not in log_df.columns:
-            log_df[c] = pd.NA
-    return log_df[LOG_COLUMNS]
+        source.replace(target)
+    return target
 
 
-def save_log(log_df: pd.DataFrame, log_path: Path) -> None:
-    """Save log safely (write temp then replace)."""
-    tmp_path = log_path.with_suffix(".tmp.xlsx")
-    log_df.to_excel(tmp_path, index=False, engine="openpyxl", na_rep="")
-    tmp_path.replace(log_path)
+def is_missing(value) -> bool:
+    return pd.isna(value) or (isinstance(value, str) and not value.strip())
 
 
-def log_has_file(log_df: pd.DataFrame, original_filename: str) -> bool:
-    """Case-insensitive check whether original_filename already exists in log."""
-    if log_df.empty:
-        return False
-    s = log_df["original_file"].astype("string").fillna("")
-    return (s.str.lower() == original_filename.lower()).any()
+def load_log(path: Path) -> pd.DataFrame:
+    log = (pd.read_excel(path, dtype="string", engine="openpyxl")
+           if path.exists() else pd.DataFrame(columns=LOG_COLUMNS))
+    if "date_received" not in log.columns:
+        log["date_received"] = log[LEGACY_DATE_COLUMN] if LEGACY_DATE_COLUMN in log.columns else pd.NA
+    elif LEGACY_DATE_COLUMN in log.columns:
+        blank = log["date_received"].isna() | log["date_received"].fillna("").str.strip().eq("")
+        log.loc[blank, "date_received"] = log.loc[blank, LEGACY_DATE_COLUMN]
+    for column in LOG_COLUMNS:
+        if column not in log.columns:
+            log[column] = pd.NA
+    log["original_file"] = log["original_file"].map(
+        lambda value: original_filename(value) if not is_missing(value) else value)
+    extras = [column for column in log.columns if column not in LOG_COLUMNS]
+    return log[LOG_COLUMNS + extras]
 
 
-def append_log_row_if_missing(
-    log_df: pd.DataFrame,
-    original_filename: str,
-    date_ingested: str,
-    non_blank_records,
-    status,
-    notes,
-    notes2=pd.NA
-) -> pd.DataFrame:
-    """
-    Append a log row if original_filename is not already logged (case-insensitive).
-    Does not overwrite existing rows.
-    """
-    if log_has_file(log_df, original_filename):
-        return log_df
+def save_log(log: pd.DataFrame, path: Path) -> None:
+    temporary = path.with_suffix(".tmp.xlsx")
+    log.to_excel(temporary, index=False, engine="openpyxl", na_rep="")
+    temporary.replace(path)
 
-    new_row = {
-        "original_file": original_filename,
-        "date_ingested": date_ingested,
-        "non_blank_records": non_blank_records,
-        "STATUS": status,
-        "notes": notes,
-        "notes2": notes2,
-    }
-    return pd.concat([log_df, pd.DataFrame([new_row])], ignore_index=True)
 
-def upsert_log_status_only(
-    log_df: pd.DataFrame,
-    filename: str,
-    date_ingested: str,
-    non_blank_records=pd.NA,
-    status=pd.NA,
-    notes=pd.NA,
-    notes2=pd.NA
-) -> pd.DataFrame:
-    """
-    If filename not in log -> append new row.
-    If filename already in log -> update STATUS always,
-      and fill other fields only if they are currently missing.
-    Never overwrite date_ingested if already present.
-    """
-    mask = log_df["original_file"].astype("string").fillna("").str.lower() == filename.lower()
+def log_mask(log: pd.DataFrame, filename: str) -> pd.Series:
+    if log.empty:
+        return pd.Series(False, index=log.index, dtype=bool)
+    target = original_filename(filename).lower()
+    names = log["original_file"].astype("string").fillna("")
+    return names.map(lambda value: original_filename(value).lower() == target)
 
+
+def already_logged(log: pd.DataFrame, filename: str) -> bool:
+    return bool(log_mask(log, filename).any())
+
+
+def upsert_log(log, filename, received_date, working_date, records, status, note):
+    """Preserve first dates/manual notes; store record counts as log-safe text."""
+    original = original_filename(filename)
+    record_text = str(records) if not is_missing(records) else pd.NA
+    mask = log_mask(log, original)
     if not mask.any():
-        return append_log_row_if_missing(
-            log_df,
-            original_filename=filename,
-            date_ingested=date_ingested,
-            non_blank_records=non_blank_records,
-            status=status,
-            notes=notes,
-            notes2=notes2
-        )
-
-    idx = log_df.index[mask][0]
-
-    # Always update STATUS for this filename
-    log_df.loc[idx, "STATUS"] = status
-
-    # Fill only if missing
-    if pd.isna(log_df.loc[idx, "non_blank_records"]) and not pd.isna(non_blank_records):
-        log_df.loc[idx, "non_blank_records"] = non_blank_records
-
-    if pd.isna(log_df.loc[idx, "notes"]) and not pd.isna(notes):
-        log_df.loc[idx, "notes"] = notes
-
-    if pd.isna(log_df.loc[idx, "notes2"]) and not pd.isna(notes2):
-        log_df.loc[idx, "notes2"] = notes2
-
-    # Do NOT overwrite date_ingested; only fill if missing
-    if pd.isna(log_df.loc[idx, "date_ingested"]) and not pd.isna(date_ingested):
-        log_df.loc[idx, "date_ingested"] = date_ingested
-
-    return log_df
+        row = {column: pd.NA for column in log.columns}
+        row.update({"original_file": original, "date_received": received_date,
+                    "working_date": working_date, "non_blank_records": record_text,
+                    "STATUS": status, "notes": note, "notes2": pd.NA})
+        return pd.concat([log, pd.DataFrame([row])], ignore_index=True)
+    idx = log.index[mask][0]
+    log.at[idx, "original_file"] = original
+    if is_missing(log.at[idx, "date_received"]):
+        log.at[idx, "date_received"] = received_date
+    if not is_missing(working_date) and is_missing(log.at[idx, "working_date"]):
+        log.at[idx, "working_date"] = working_date
+    if not is_missing(record_text):
+        log.at[idx, "non_blank_records"] = record_text
+    log.at[idx, "STATUS"] = status
+    if not is_missing(note) and is_missing(log.at[idx, "notes"]):
+        log.at[idx, "notes"] = note
+    return log
 
 
-def update_log_status_to_edited(log_df: pd.DataFrame, original_filename: str) -> pd.DataFrame:
-    """
-    Update STATUS to 'EDITED' for the row matching original_filename (case-insensitive).
-    If no row exists, create one with today's date and missing other fields.
-    """
-    today_str = date.today().isoformat()
-    mask = log_df["original_file"].astype("string").fillna("").str.lower() == original_filename.lower()
-
-    if mask.any():
-        log_df.loc[mask, "STATUS"] = "EDITED"
-        return log_df
-
-    # If original wasn't logged, add minimal row (only original_file + date_ingested + STATUS)
-    return append_log_row_if_missing(
-        log_df,
-        original_filename=original_filename,
-        date_ingested=today_str,
-        non_blank_records=pd.NA,
-        status="EDITED",
-        notes=pd.NA,
-        notes2=pd.NA
-    )
-
-
-def is_edited_file(filename: str) -> bool:
-    """True if filename begins with edited_ (case-insensitive)."""
-    return re.match(r"^edited_", filename, flags=re.IGNORECASE) is not None
-
-
-def strip_edited_prefix(filename: str) -> str:
-    """Remove leading edited_ (case-insensitive) once."""
-    return re.sub(r"^edited_", "", filename, flags=re.IGNORECASE)
-
-
-# =========================
-# Main processing logic
-# =========================
-
-def process_original_files(template_cols: int, log_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Requirements:
-    - Log EVERY file in ORIGINAL regardless of extension.
-    - If file cannot be read as Excel or CSV:
-        - log original_file + date_ingested only
-        - leave other fields blank (missing)
-    - If readable:
-        - decide WORKING vs REJECTED based on column count match
-        - copy/write accordingly (only for readable files)
-        - log without overwriting existing rows
-    - If file already exists in WORKING or REJECTED:
-        - do not copy again
-        - but STILL log it if missing; if readable, fill counts/notes and STATUS based on where it already exists
-    """
-    working_existing = list_filenames_lower(WORKING_FILES)
-    rejected_existing = list_filenames_lower(REJECTED_FILES)
-
-    candidates = sorted([p for p in ORIGINAL_FILES.iterdir() if p.is_file()])
-    today_str = date.today().isoformat()
-
-    for src in candidates:
-        # Always attempt to log if not already logged
-        if log_has_file(log_df, src.name):
-            # Don't overwrite anything for already-logged files
-            # (edited promotions are handled elsewhere)
+def process_new_originals(expected: int, log: pd.DataFrame) -> pd.DataFrame:
+    today = date.today().isoformat()
+    candidates = sorted(p for p in ORIGINAL_FILES.iterdir()
+                        if p.is_file() and not p.name.startswith("."))
+    for source in candidates:
+        original = source.name
+        if already_logged(log, original):
+            print(f"SKIPPED ALREADY PROCESSED: {source.name}")
             continue
-
-        # Try reading as Excel or CSV, regardless of extension
         try:
-            df = read_any_file_loose(src)
-            readable = True
-        except Exception as e:
-            readable = False
-            df = None
-
-        if not readable:
-            # Leave everything except original_file/date_ingested missing
-            log_df = append_log_row_if_missing(
-                log_df,
-                original_filename=src.name,
-                date_ingested=today_str,
-                non_blank_records=pd.NA,
-                status=pd.NA,
-                notes=pd.NA,
-                notes2=pd.NA
-            )
-            print(f"LOG ONLY (unreadable as excel/csv): {src.name}")
+            df = read_file(source)
+        except Exception as exc:
+            target = WORKING_FILES / rejected_filename(original)
+            remove_conflict(target)
+            shutil.copy2(source, target)
+            log = upsert_log(log, original, today, pd.NA, pd.NA,
+                             "REJECTED_UNREADABLE",
+                             f"unable_to_read_as_excel_or_csv={type(exc).__name__}")
+            print(f"REJECTED UNREADABLE: {source.name} -> {target.name}")
             continue
+        received = partner_column_count(df)
+        records = nonblank_record_count(df)
+        passed = received == expected
+        target = WORKING_FILES / (original if passed else rejected_filename(original))
+        remove_conflict(target)
+        written = write_file(add_metadata(df, original), target)
+        log = upsert_log(log, original, today, today if passed else pd.NA, records,
+                         "WORKING" if passed else "REJECTED_WORKING_FOLDER",
+                         pd.NA if passed else f"expected_cols={expected}; received_cols={received}")
+        print(f"{'WORKING' if passed else 'REJECTED'}: {source.name} -> {written.name}")
+    return log
 
-        # Readable: compute log metrics
-        
-            received_cols = int(df.shape[1])
-            non_blank = count_nonblank_records(df)
-            
-            # Only populate notes if mismatch
-            if received_cols != template_cols:
-                notes = f"expected_cols={template_cols}; received_cols={received_cols}"
-            else:
-                notes = pd.NA
 
-
-        # If file already exists elsewhere, do not recopy; set STATUS to where it exists
-        src_lc = src.name.lower()
-        if src_lc in working_existing:
-            status = "WORKING_FILES"
-            log_df = append_log_row_if_missing(log_df, src.name, today_str, non_blank, status, notes, pd.NA)
-            print(f"LOG (already in WORKING): {src.name}")
+def process_flagged_working(expected: int, log: pd.DataFrame) -> pd.DataFrame:
+    today = date.today().isoformat()
+    candidates = sorted(p for p in WORKING_FILES.iterdir()
+                        if p.is_file() and not p.name.startswith(".") and
+                        (has_status(p.name, REJECTED_PREFIX) or
+                         has_status(p.name, EDITED_PREFIX)))
+    for source in candidates:
+        if not source.exists():
             continue
-
-        if src_lc in rejected_existing:
-            status = "REJECTED_FILES"
-            log_df = append_log_row_if_missing(log_df, src.name, today_str, non_blank, status, notes, pd.NA)
-            print(f"LOG (already in REJECTED): {src.name}")
-            continue
-
-        # Not present elsewhere: apply column-count rule and copy/write
-        if received_cols == template_cols:
-            out_path = WORKING_FILES / src.name
-            df2 = add_required_columns(df, src.name)
-            written_to = write_any_file(df2, out_path)
-            status = "WORKING_FILES"
-            print(f"WORKING: {src.name} -> {written_to.name}")
-        else:
-            shutil.copy2(src, REJECTED_FILES / src.name)
-            status = "REJECTED_FILES"
-            print(f"REJECT (col mismatch {received_cols} != {template_cols}): {src.name}")
-
-        log_df = append_log_row_if_missing(
-            log_df,
-            original_filename=src.name,
-            date_ingested=today_str,
-            non_blank_records=non_blank,
-            status=status,
-            notes=notes,
-            notes2=pd.NA
-        )
-
-    return log_df
-
-def process_original_files(template_cols: int, log_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Requirements:
-    - Log EVERY file in ORIGINAL_FILES regardless of extension.
-    - If unreadable as excel/csv: log original_file + date_ingested only; rest missing.
-    - If readable: compute non_blank_records; route to WORKING/REJECTED based on col count.
-    - If file already exists in WORKING/REJECTED: do not recopy; just log status.
-    - Do not overwrite log entries if already present.
-    - Only write notes when column count mismatches.
-    """
-    working_existing = list_filenames_lower(WORKING_FILES)
-    rejected_existing = list_filenames_lower(REJECTED_FILES)
-
-    candidates = sorted([p for p in ORIGINAL_FILES.iterdir() if p.is_file()])
-    today_str = date.today().isoformat()
-
-    for src in candidates:
-        # --- ALWAYS initialize so they exist on every path ---
-        non_blank = pd.NA
-        status = pd.NA
-        notes = pd.NA
-
-        # don't overwrite existing log rows
-        if log_has_file(log_df, src.name):
-            continue
-
-        # attempt read regardless of extension
+        original = original_filename(source.name)
+        was_rejected = has_status(source.name, REJECTED_PREFIX)
+        was_edited = has_status(source.name, EDITED_PREFIX)
+        normalized = rejected_filename(source.name) if was_rejected else edited_filename(source.name)
+        source = rename_working(source, normalized)
         try:
-            df = read_any_file_loose(src)
-        except Exception:
-            # unreadable: log only file + date
-            log_df = append_log_row_if_missing(
-                log_df,
-                original_filename=src.name,
-                date_ingested=today_str,
-                non_blank_records=pd.NA,
-                status=pd.NA,
-                notes=pd.NA,
-                notes2=pd.NA
-            )
-            print(f"LOG ONLY (unreadable as excel/csv): {src.name}")
+            df = read_file(source)
+        except Exception as exc:
+            renamed = rename_working(source, rejected_filename(source.name))
+            log = upsert_log(log, original, today, pd.NA, pd.NA,
+                             "REJECTED_UNREADABLE",
+                             f"unable_to_read_as_excel_or_csv={type(exc).__name__}")
+            print(f"STILL UNREADABLE: {source.name} -> {renamed.name}")
             continue
-
-        # readable: compute counts
-        received_cols = int(df.shape[1])
-        non_blank = count_nonblank_records(df)
-
-        # notes only if mismatch
-        if received_cols != template_cols:
-            notes = f"expected_cols={template_cols}; received_cols={received_cols}"
+        received = partner_column_count(df)
+        records = nonblank_record_count(df)
+        if received == expected:
+            renamed = rename_working(source, edited_filename(source.name)) if was_rejected else source
+            written = write_file(add_metadata(df, original), renamed)
+            log = upsert_log(log, original, today, today, records, "EDITED_WORKING", pd.NA)
+            print(f"EDITED CONFIRMED: {source.name} -> {written.name}")
         else:
-            notes = pd.NA
-
-        src_lc = src.name.lower()
-
-        # already exists? log location, do not copy
-        if src_lc in working_existing:
-            status = "WORKING_FILES"
-            log_df = append_log_row_if_missing(
-                log_df,
-                original_filename=src.name,
-                date_ingested=today_str,
-                non_blank_records=non_blank,
-                status=status,
-                notes=notes,
-                notes2=pd.NA
-            )
-            print(f"LOG (already in WORKING): {src.name}")
-            continue
-
-        if src_lc in rejected_existing:
-            status = "REJECTED_FILES"
-            log_df = append_log_row_if_missing(
-                log_df,
-                original_filename=src.name,
-                date_ingested=today_str,
-                non_blank_records=non_blank,
-                status=status,
-                notes=notes,
-                notes2=pd.NA
-            )
-            print(f"LOG (already in REJECTED): {src.name}")
-            continue
-
-       
-        # not present: route
-        if received_cols == template_cols:
-            out_path = WORKING_FILES / src.name
-        
-            if out_path.exists():
-                status = "WORKING_FILES"
-                print(f"SKIP WRITE (already in WORKING): {src.name}")
-            else:
-                df2 = add_required_columns(df, src.name)
-                written_to = write_any_file(df2, out_path)
-                status = "WORKING_FILES"
-                print(f"WORKING: {src.name} -> {written_to.name}")
-        else:
-            shutil.copy2(src, REJECTED_FILES / src.name)
-            status = "REJECTED_FILES"
-
-
-        # log final outcome (variables are guaranteed defined)
-        log_df = append_log_row_if_missing(
-            log_df,
-            original_filename=src.name,
-            date_ingested=today_str,
-            non_blank_records=non_blank,
-            status=status,
-            notes=notes,
-            notes2=pd.NA
-        )
-
-    return log_df
-
-
-def process_edited_files_in_rejected(template_cols: int, log_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    REQUIRED behavior:
-    - Leave rejected files in REJECTED_FILES and in the log.
-    - If a file in REJECTED_FILES starts with edited_:
-        - Log it as its own entry (edited filename).
-        - If readable and cols match template:
-            - COPY it into WORKING_FILES as a new file (keep edited_ prefix)
-            - Keep the edited file in REJECTED_FILES too
-            - STATUS = EDITED_WORKING
-        - If readable and cols mismatch:
-            - Leave it in REJECTED_FILES
-            - STATUS = EDITED_REJECTED
-            - notes = expected/received
-        - If unreadable:
-            - Log filename + date only; leave rest missing
-    - If the edited_ filename already exists in the log, update its STATUS (don’t overwrite date_ingested).
-    """
-    today_str = date.today().isoformat()
-
-    candidates = sorted([
-        p for p in REJECTED_FILES.iterdir()
-        if p.is_file() and is_edited_file(p.name)
-    ])
-
-    for src in candidates:
-        # Defaults
-        non_blank = pd.NA
-        status = pd.NA
-        notes = pd.NA
-
-        # Try to read as Excel/CSV regardless of extension
-        try:
-            df = read_any_file_loose(src)
-        except Exception as e:
-            print(f"LOG ONLY (edited_ unreadable as excel/csv): {src.name} -> {e}")
-            log_df = upsert_log_status_only(
-                log_df,
-                filename=src.name,
-                date_ingested=today_str,
-                non_blank_records=pd.NA,
-                status=pd.NA,
-                notes=pd.NA,
-                notes2=pd.NA
-            )
-            continue
-
-        received_cols = int(df.shape[1])
-        non_blank = count_nonblank_records(df)
-
-        if received_cols == template_cols:
-            # COPY into WORKING (keep edited_ prefix). Do NOT remove from REJECTED.
-            out_path = WORKING_FILES / src.name
-
-            # Write as a pandas-produced file with your standard added columns
-            df2 = add_required_columns(df, src.name)
-            written_to = write_any_file(df2, out_path)
-            print(f"EDITED -> WORKING (copied, rejected retained): {src.name} -> {written_to.name}")
-
-            status = "EDITED_WORKING"
-            notes = pd.NA  # only record cols in notes when mismatch
-
-        else:
-            status = "EDITED_REJECTED"
-            notes = f"expected_cols={template_cols}; received_cols={received_cols}"
-            print(f"EDITED remains REJECTED (col mismatch {received_cols} != {template_cols}): {src.name}")
-
-        # Log as its own entry (edited filename). Update STATUS if already logged.
-        log_df = upsert_log_status_only(
-            log_df,
-            filename=src.name,
-            date_ingested=today_str,
-            non_blank_records=non_blank,
-            status=status,
-            notes=notes,
-            notes2=pd.NA
-        )
-
-    return log_df
-
-
+            desired = rejected_filename(source.name) if was_edited else rejected_filename(original)
+            renamed = rename_working(source, desired)
+            log = upsert_log(log, original, today, pd.NA, records,
+                             "REJECTED_WORKING_FOLDER",
+                             f"expected_cols={expected}; received_cols={received}")
+            print(f"FAILED FIELD CHECK: {source.name} -> {renamed.name}")
+    return log
 
 
 if __name__ == "__main__":
-    ensure_dirs(ORIGINAL_FILES, WORKING_FILES, REJECTED_FILES)
-
-    log_df = load_or_create_log(DATA_LOG)
-
-    tmpl_cols = template_column_count(DATA_TEMPLATE)
-    print(f"Template column count = {tmpl_cols}")
-
-    # Log + process originals (logs ALL files in ORIGINAL_FILES, even weird extensions)
-    log_df = process_original_files(tmpl_cols, log_df)
-
-    # Promote edited_ files living in REJECTED_FILES
-    log_df = process_edited_files_in_rejected(tmpl_cols, log_df)
-
+    ensure_dirs(ORIGINAL_FILES, WORKING_FILES)
+    log_df = load_log(DATA_LOG)
+    expected_columns = partner_column_count(read_file(DATA_TEMPLATE))
+    print(f"Template partner-data column count = {expected_columns}")
+    log_df = process_new_originals(expected_columns, log_df)
+    log_df = process_flagged_working(expected_columns, log_df)
     save_log(log_df, DATA_LOG)
     print(f"Log saved to: {DATA_LOG}")
-
     print("Done.")

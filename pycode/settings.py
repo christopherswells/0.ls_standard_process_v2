@@ -153,12 +153,14 @@ print("DATA_ROOT =", DATA_ROOT)
 DATA_ROOT = Path(DATA_ROOT)
 
 ORIGINAL_FILES = DATA_ROOT / "original_files"
-REJECTED_FILES = DATA_ROOT / "rejected_files"
-EDITED_FILES = DATA_ROOT  / "edited_files"
+# REJECTED_FILES = DATA_ROOT / "rejected_files"
+# EDITED_FILES = DATA_ROOT  / "edited_files"
 WORKING_FILES = DATA_ROOT / "working_files"
 
 
-for folder in [ORIGINAL_FILES, REJECTED_FILES, EDITED_FILES, WORKING_FILES]:
+# 9/10/26 changing file parsing behavior to reduce folders 
+# for folder in [ORIGINAL_FILES, REJECTED_FILES, EDITED_FILES, WORKING_FILES]:
+for folder in [ORIGINAL_FILES, WORKING_FILES]:
     folder.mkdir(parents=True, exist_ok=True)
 
 
