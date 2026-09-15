@@ -122,8 +122,8 @@ def combine_working_files_using_template(
     working_dir: Path,
     template_path: Path,
     combined_file: Path,
-    sheet_name: str = "combined"
-) -> None:
+    sheet_name: str = "combined",
+) -> pd.DataFrame:
 
     working_dir = Path(working_dir)
     combined_file = Path(combined_file)
@@ -180,7 +180,7 @@ def combine_working_files_using_template(
         with pd.ExcelWriter(combined_file, engine="openpyxl") as writer:
             empty.to_excel(writer, index=False, sheet_name=sheet_name)
         print(f"[DONE] No valid working files. Wrote empty combined workbook: {combined_file}")
-        return
+        return empty
 
     combined_df = pd.concat(dfs, ignore_index=True, sort=False)
 
@@ -200,6 +200,7 @@ def combine_working_files_using_template(
     print(f"       Files combined: {len(dfs)} | Files skipped: {len(skipped)}")
     print(f"       Combined rows: {len(combined_df):,} | Combined cols: {combined_df.shape[1]}")
 
+    return combined_df
 
 if __name__ == "__main__":
     combine_working_files_using_template(
