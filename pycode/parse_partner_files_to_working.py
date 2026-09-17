@@ -15,17 +15,7 @@ Enhancements:
 - Promote edited_ files found in REJECTED_FILES into WORKING_FILES (keeping edited_ prefix)
 - Update log STATUS to EDITED for the original filename (prefix removed)
 """
-# -*- coding: utf-8 -*-
-"""
-parse_district_data_files + logging + edited_ handling in REJECTED_FILES
 
-Enhancements:
-- Log every file found in ORIGINAL_FILES regardless of extension
-- Attempt to read as Excel or CSV; if unreadable, log only original_file + date_ingested
-- Do not scan EDITED_FILES folder
-- Promote edited_ files found in REJECTED_FILES into WORKING_FILES (keeping edited_ prefix)
-- Update log STATUS to EDITED for the original filename (prefix removed)
-"""
 
 from pathlib import Path
 import re

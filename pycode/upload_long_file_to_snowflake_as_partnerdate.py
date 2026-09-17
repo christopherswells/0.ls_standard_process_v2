@@ -28,8 +28,6 @@ from pycode.settings import *
 
 
 
-
-
 #--------------------------------------------------------------   
 # ADD LONG with Settings PARTNER DATA TO SNOWFLAKE TABLE
 #---------------------------------------------------------------
