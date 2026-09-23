@@ -258,41 +258,157 @@ def process_new_originals(expected: int, log: pd.DataFrame) -> pd.DataFrame:
 
 def process_flagged_working(expected: int, log: pd.DataFrame) -> pd.DataFrame:
     today = date.today().isoformat()
-    candidates = sorted(p for p in WORKING_FILES.iterdir()
-                        if p.is_file() and not p.name.startswith(".") and
-                        (has_status(p.name, REJECTED_PREFIX) or
-                         has_status(p.name, EDITED_PREFIX)))
+
+    candidates = sorted(
+        p for p in WORKING_FILES.iterdir()
+        if p.is_file()
+        and not p.name.startswith(".")
+        and (
+            has_status(p.name, REJECTED_PREFIX)
+            or has_status(p.name, EDITED_PREFIX)
+        )
+    )
+
     for source in candidates:
+
         if not source.exists():
             continue
+
         original = original_filename(source.name)
-        was_rejected = has_status(source.name, REJECTED_PREFIX)
-        was_edited = has_status(source.name, EDITED_PREFIX)
-        normalized = rejected_filename(source.name) if was_rejected else edited_filename(source.name)
-        source = rename_working(source, normalized)
+
+        was_rejected = has_status(
+            source.name,
+            REJECTED_PREFIX
+        )
+
+        was_edited = has_status(
+            source.name,
+            EDITED_PREFIX
+        )
+
+        normalized = (
+            rejected_filename(source.name)
+            if was_rejected
+            else edited_filename(source.name)
+        )
+
+        source = rename_working(
+            source,
+            normalized
+        )
+
         try:
             df = read_file(source)
+
         except Exception as exc:
-            renamed = rename_working(source, rejected_filename(source.name))
-            log = upsert_log(log, original, today, pd.NA, pd.NA,
-                             "REJECTED_UNREADABLE",
-                             f"unable_to_read_as_excel_or_csv={type(exc).__name__}")
-            print(f"STILL UNREADABLE: {source.name} -> {renamed.name}")
+
+            renamed = rename_working(
+                source,
+                rejected_filename(source.name)
+            )
+
+            log = upsert_log(
+                log,
+                original,
+                today,
+                pd.NA,
+                pd.NA,
+                "REJECTED_UNREADABLE",
+                f"unable_to_read_as_excel_or_csv={type(exc).__name__}"
+            )
+
+            print(
+                f"STILL UNREADABLE: "
+                f"{source.name} -> {renamed.name}"
+            )
+
             continue
+
         received = partner_column_count(df)
         records = nonblank_record_count(df)
+
         if received == expected:
-            renamed = rename_working(source, edited_filename(source.name)) if was_rejected else source
-            written = write_file(add_metadata(df, original), renamed)
-            log = upsert_log(log, original, today, today, records, "EDITED_WORKING", pd.NA)
-            print(f"EDITED CONFIRMED: {source.name} -> {written.name}")
+
+            renamed = (
+                rename_working(
+                    source,
+                    edited_filename(source.name)
+                )
+                if was_rejected
+                else source
+            )
+
+            written = write_file(
+                add_metadata(df, original),
+                renamed
+            )
+
+            # --------------------------------------------------
+            # REMOVE ALL OTHER VERSIONS OF THIS FILE
+            # IF EDITED VERSION IS VALID
+            # --------------------------------------------------
+            for item in WORKING_FILES.iterdir():
+
+                if not item.is_file():
+                    continue
+
+                if item.resolve() == Path(written).resolve():
+                    continue
+
+                if (
+                    original_filename(item.name).lower()
+                    == original_filename(written.name).lower()
+                ):
+                    item.unlink()
+
+                    print(
+                        f"REMOVED SUPERSEDED VERSION: "
+                        f"{item.name}"
+                    )
+
+            log = upsert_log(
+                log,
+                original,
+                today,
+                today,
+                records,
+                "EDITED_WORKING",
+                pd.NA
+            )
+
+            print(
+                f"EDITED CONFIRMED: "
+                f"{source.name} -> {written.name}"
+            )
+
         else:
-            desired = rejected_filename(source.name) if was_edited else rejected_filename(original)
-            renamed = rename_working(source, desired)
-            log = upsert_log(log, original, today, pd.NA, records,
-                             "REJECTED_WORKING_FOLDER",
-                             f"expected_cols={expected}; received_cols={received}")
-            print(f"FAILED FIELD CHECK: {source.name} -> {renamed.name}")
+
+            desired = (
+                rejected_filename(source.name)
+                if was_edited
+                else rejected_filename(original)
+            )
+
+            renamed = rename_working(
+                source,
+                desired
+            )
+
+            log = upsert_log(
+                log,
+                original,
+                today,
+                pd.NA,
+                records,
+                "REJECTED_WORKING_FOLDER",
+                f"expected_cols={expected}; received_cols={received}"
+            )
+
+            print(
+                f"FAILED FIELD CHECK: "
+                f"{source.name} -> {renamed.name}"
+            )
+
     return log
 
 
