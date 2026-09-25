@@ -139,6 +139,130 @@ else:
     df_wide = pd.read_excel(COMBINED_FILE, dtype=str, engine="openpyxl")
     df_wide = _normalize_strings(df_wide)
 
+
+# ==============================================================
+# IDENTIFY EXACT DUPLICATES IN THE WIDE COMBINED FILE
+#
+# Compare the records exactly as they exist in the combined file,
+# excluding fields created by create_combined_file.py and common
+# generated index/row-number fields. The first occurrence is kept;
+# every later occurrence is marked for removal after the long pivot.
+# ==============================================================
+
+def mark_exact_duplicates_in_combined_file(
+    df: pd.DataFrame,
+    ignored_columns: Optional[List[str]] = None,
+) -> Tuple[pd.DataFrame, List[str]]:
+    """
+    Mark exact duplicate rows in the wide combined district file.
+
+    Duplicate comparison excludes ingestion metadata created by
+    create_combined_file.py, including FILENAMEFROMDISTRICT and
+    AGENCYCODE, plus typical generated index and row-number fields.
+
+    The first row in each exact-duplicate group is retained. Every
+    subsequent row receives EXACT_DUPLICATE=True. This helper column
+    is carried through the wide-to-long pivot and used to append
+    'exact_duplicate' to FLAG_REASON.
+
+    Returns
+    -------
+    df : pd.DataFrame
+        Copy of the input with an EXACT_DUPLICATE Boolean column.
+    comparison_columns : list[str]
+        Columns used for exact-duplicate comparison.
+    """
+    df = df.copy()
+
+    default_ignored = {
+        # Fields explicitly created by create_combined_file.py
+        "FILENAMEFROMDISTRICT",
+        "AGENCYCODE",
+        "AGENCY_CODE",
+
+        # Common provenance/source-file variants
+        "FILENAME_FROM_DISTRICT",
+        "SOURCE_FILENAME",
+        "SOURCEFILE",
+        "SOURCE_FILE",
+
+        # Common generated index/row-number columns
+        "INDEX",
+        "LEVEL_0",
+        "ROWNUM",
+        "ROW_NUM",
+        "ROWNUMBER",
+        "ROW_NUMBER",
+        "RECORDNUM",
+        "RECORD_NUM",
+        "RECORDNUMBER",
+        "RECORD_NUMBER",
+        "UNNAMED: 0",
+    }
+
+    if ignored_columns:
+        default_ignored.update(
+            str(col).strip().upper()
+            for col in ignored_columns
+        )
+
+    def is_generated_or_ignored(column_name: str) -> bool:
+        col = str(column_name).strip().upper()
+
+        if col in default_ignored:
+            return True
+
+        generated_patterns = [
+            r"^UNNAMED(?::|\s|_)*\d*$",
+            r"^INDEX(?:_\d+)?$",
+            r"^LEVEL_\d+$",
+            r"^ROW_?NUM(?:BER)?$",
+            r"^RECORD_?NUM(?:BER)?$",
+            r"^SOURCE_?FILE(?:NAME)?$",
+            r"^FILE_?NAME_?FROM_?DISTRICT$",
+        ]
+
+        return any(
+            re.fullmatch(pattern, col)
+            for pattern in generated_patterns
+        )
+
+    comparison_columns = [
+        col
+        for col in df.columns
+        if not is_generated_or_ignored(col)
+        and str(col).strip().upper() != "EXACT_DUPLICATE"
+    ]
+
+    if not comparison_columns:
+        raise ValueError(
+            "No columns remain for exact-duplicate comparison."
+        )
+
+    # keep='first': retain the first row and mark only later copies.
+    df["EXACT_DUPLICATE"] = df.duplicated(
+        subset=comparison_columns,
+        keep="first",
+    )
+
+    duplicate_count = int(df["EXACT_DUPLICATE"].sum())
+
+    print(
+        f"Exact duplicate comparison used "
+        f"{len(comparison_columns):,} columns."
+    )
+    print(
+        f"Exact duplicate combined-file rows marked for removal: "
+        f"{duplicate_count:,}"
+    )
+
+    return df, comparison_columns
+
+
+df_wide, exact_duplicate_comparison_columns = (
+    mark_exact_duplicates_in_combined_file(df_wide)
+)
+
 # ---------------------------------------------------------
 # Pivot1:   wide → long
 #
@@ -626,6 +750,25 @@ merged_inner["FLAG_REASON"] = pd.NA
 
 
 # ----------------------------------------------------
+# FLAG EXACT DUPLICATES FROM THE WIDE COMBINED FILE
+# ----------------------------------------------------
+# EXACT_DUPLICATE was added before the pivot. After the D_ prefix is
+# applied, the helper is D_EXACT_DUPLICATE. The first occurrence was
+# retained; only subsequent copies are flagged.
+exact_duplicate_mask = (
+    merged_inner["D_EXACT_DUPLICATE"]
+    .fillna(False)
+    .astype(bool)
+)
+
+merged_inner = append_flag_reason(
+    merged_inner,
+    exact_duplicate_mask,
+    "exact_duplicate"
+)
+
+
+# ----------------------------------------------------
 # FLAG MISSING GRADE
 # ----------------------------------------------------
 missing_grade_mask = merged_inner["D_GRADE_CLEAN"].isna()
@@ -912,6 +1055,14 @@ if "FLAG_REASON" in flagged_for_removal.columns:
     flagged_for_removal.insert(0, "FLAG_REASON", flag_reason)
 
 
+# The removal reason contains the relevant information, so omit the
+# internal duplicate helper from the saved flagged table.
+flagged_for_removal = flagged_for_removal.drop(
+    columns=["D_EXACT_DUPLICATE"],
+    errors="ignore"
+)
+
+
 # ----------------------------------------------------
 # REMOVE FLAGGED RECORDS BEFORE STUDY FILTERING
 # ----------------------------------------------------
@@ -984,8 +1135,15 @@ merged_invalid = merged_inner.loc[
 # 7. FINAL CLEANUP
 # ================================================================
 
-df_long = merged_valid.drop(columns=["SETTINGS_NOTES",'GRADE_ALLOWED_ANY_STUDY', 'GRADE_ALLOWED']
-                            , errors="ignore")
+df_long = merged_valid.drop(
+    columns=[
+        "SETTINGS_NOTES",
+        "GRADE_ALLOWED_ANY_STUDY",
+        "GRADE_ALLOWED",
+        "D_EXACT_DUPLICATE",
+    ],
+    errors="ignore"
+)
 
 
 def sanitize_object_columns(df):
