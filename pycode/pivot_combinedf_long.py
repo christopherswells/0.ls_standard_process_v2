@@ -1,83 +1,328 @@
 # -*- coding: utf-8 -*-
 """
-Created on Wed May 13 16:40:22 2026
+Consolidated wide-to-long pivot for linking-study partner data.
 
-@author: Chris.Wells
+Business rules implemented in this version
+------------------------------------------
+1. Do not merge df_long to settings_xl.
+2. Do not create or retain settings-derived fields.
+3. Remove exact duplicates, retaining the first wide-file occurrence.
+4. Exclude long rows when no valid score-bearing field exists among
+   SS, PLCODE, PLDESC, and PL when present.
+5. Do not save all-invalid-score rows in removed_records.parquet.
+6. Save exact duplicate long rows in removed_records.parquet, unless
+   they also have no valid score-bearing field.
+7. Keep FLAG_REASON in df_long.
+8. Preserve upstream missing_grade, incorrect_term, and
+   test_date_out_of_range flags when supplied in FLAG_REASON or
+   FLAGGED_REASON.
+9. Remove any upstream non-numeric_ss flag and recalculate it only on
+   records retained in df_long after D_SS_CLEAN has been created.
+10. Flag invalid_score when exactly one available score-bearing field
+    is valid.
+11. Defensively remove AGENCYCODE.1 and D_AGENCYCODE.1.
 """
+
 import re
-import pandas as pd
-from typing import List, Tuple
 import sys
-from pathlib import Path
-from typing import Optional
 from datetime import datetime
 from pathlib import Path
-import numpy as np
+from typing import List, Optional, Tuple
 
+import numpy as np
+import pandas as pd
+
+
+# ---------------------------------------------------------
 # Spyder sometimes gets screwy with the working directory
+# ---------------------------------------------------------
+
 ROOT = Path(__file__).resolve().parents[1]
+
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from pycode.settings import *
 
-# Suffixes already uppercase
-# SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 
+# =========================================================
+# CONSTANTS
+# =========================================================
+
+UPSTREAM_FLAGS_TO_RETAIN = {
+    "missing_grade",
+    "incorrect_term",
+    "test_date_out_of_range",
+}
+
+INVALID_SCORE_TEXT_VALUES = {
+    "",
+    "-",
+    "--",
+    "---",
+    ".",
+    "..",
+    "...",
+    "NA",
+    "N/A",
+    "N\\A",
+    "N.A.",
+    "NAN",
+    "NULL",
+    "NONE",
+    "MISSING",
+    "NOT AVAILABLE",
+    "NOT APPLICABLE",
+    "#N/A",
+    "#NA",
+}
+
+LEGACY_AND_UNWANTED_COLUMNS = [
+    "SETTINGS_STATE",
+    "SETTINGS_TERM",
+    "SETTINGS_STUDY_TYPE",
+    "SETTINGS_D_SUBJECT",
+    "SETTINGS_D_SUBJECT_CODE",
+    "SETTINGS_CUTS_SUBJECT",
+    "SETTINGS_D_MAPGROWTH_TEST_NAME",
+    "SETTINGS_STUDY_GRADES",
+    "SETTINGS_GRADE_LIST",
+    "original_file_path",
+    "ORIGINAL_FILE_PATH",
+    "D_ORIGINAL_FILE_PATH",
+    "AGENCYCODE.1",
+    "D_AGENCYCODE.1",
+]
+
+
+# =========================================================
+# GENERAL HELPERS
+# =========================================================
+
+def _normalize_strings(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize missing values and uppercase column headers."""
+    df = df.copy()
+    df = df.where(pd.notna(df), pd.NA)
+    df = df.replace(r"^\s*$", pd.NA, regex=True)
+    df = df.astype("string")
+    df.columns = [str(column).strip().upper() for column in df.columns]
+    return df
+
+
+def rename_columns_upper_with_prefix(
+    df: pd.DataFrame,
+    prefix: str = "D_",
+) -> pd.DataFrame:
+    """Uppercase all column names and prepend prefix."""
+    df = df.copy()
+    df.columns = [
+        f"{prefix}{str(column).strip().upper()}"
+        for column in df.columns
+    ]
+    return df
+
+
+def append_removal_reason(
+    df: pd.DataFrame,
+    mask,
+    reason: str,
+) -> pd.DataFrame:
+    """Append a reason to REMOVAL_REASON and mark rows for removal."""
+    df = df.copy()
+    mask = pd.Series(mask, index=df.index).fillna(False).astype(bool)
+    current_reason = df.loc[mask, "REMOVAL_REASON"]
+
+    df.loc[mask, "REMOVAL_REASON"] = np.where(
+        current_reason.isna(),
+        reason,
+        current_reason.astype(str) + "|" + reason,
+    )
+    df.loc[mask, "REMOVE_RECORD"] = True
+    return df
+
+
+def append_flag_reason(
+    df: pd.DataFrame,
+    mask,
+    reason: str,
+) -> pd.DataFrame:
+    """Append a non-removal QA reason to FLAG_REASON."""
+    df = df.copy()
+    mask = pd.Series(mask, index=df.index).fillna(False).astype(bool)
+    current_reason = df.loc[mask, "FLAG_REASON"]
+
+    df.loc[mask, "FLAG_REASON"] = np.where(
+        current_reason.isna(),
+        reason,
+        current_reason.astype(str) + "|" + reason,
+    )
+    return df
+
+
+def merge_flag_reason_values(
+    df: pd.DataFrame,
+    source_column: str,
+    target_column: str = "FLAG_REASON",
+) -> pd.DataFrame:
+    """Append pipe-delimited flags from source_column to target_column."""
+    df = df.copy()
+
+    if source_column not in df.columns:
+        return df
+
+    if target_column not in df.columns:
+        df[target_column] = pd.Series(pd.NA, index=df.index, dtype="string")
+
+    source_values = (
+        df[source_column]
+        .astype("string")
+        .replace(r"^\s*$", pd.NA, regex=True)
+    )
+    target_values = (
+        df[target_column]
+        .astype("string")
+        .replace(r"^\s*$", pd.NA, regex=True)
+    )
+    source_present = source_values.notna()
+
+    df.loc[source_present, target_column] = np.where(
+        target_values.loc[source_present].isna(),
+        source_values.loc[source_present],
+        target_values.loc[source_present] + "|" + source_values.loc[source_present],
+    )
+    return df
+
+
+def normalize_flag_token(value: str) -> str:
+    """Normalize a flag token for comparison."""
+    return str(value).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def filter_flag_reasons(
+    df: pd.DataFrame,
+    allowed_reasons: set,
+    flag_column: str = "FLAG_REASON",
+) -> pd.DataFrame:
+    """Keep only allowed pipe-delimited flags in flag_column."""
+    df = df.copy()
+
+    if flag_column not in df.columns:
+        return df
+
+    allowed_normalized = {
+        normalize_flag_token(reason)
+        for reason in allowed_reasons
+    }
+
+    def filter_value(value):
+        if pd.isna(value):
+            return pd.NA
+
+        kept = []
+        seen = set()
+
+        for raw_reason in str(value).split("|"):
+            normalized = normalize_flag_token(raw_reason)
+            if normalized in allowed_normalized and normalized not in seen:
+                kept.append(normalized)
+                seen.add(normalized)
+
+        return "|".join(kept) if kept else pd.NA
+
+    df[flag_column] = df[flag_column].apply(filter_value).astype("string")
+    return df
+
+
+def sanitize_object_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert object values to Parquet-safe values."""
+    df = df.copy()
+
+    def sanitize_value(value):
+        if value is None:
+            return None
+        if isinstance(value, float) and pd.isna(value):
+            return None
+        if isinstance(value, (list, tuple, np.ndarray)):
+            return str(list(value))
+        return str(value).strip()
+
+    for column in df.columns:
+        if df[column].dtype == "object":
+            df[column] = df[column].apply(sanitize_value)
+
+    return df
+
+
+def drop_unwanted_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove AGENCYCODE.1 aliases without affecting AGENCYCODE."""
+    df = df.copy()
+    unwanted_names = {"AGENCYCODE.1", "D_AGENCYCODE.1"}
+    columns_found = [
+        column
+        for column in df.columns
+        if str(column).strip().upper() in unwanted_names
+    ]
+    return df.drop(columns=columns_found, errors="ignore")
+
+
+def drop_legacy_and_unwanted_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop legacy settings, source-path, and unwanted duplicate columns."""
+    return df.drop(columns=LEGACY_AND_UNWANTED_COLUMNS, errors="ignore")
+
+
+# =========================================================
+# WIDE-TO-LONG PIVOT
+# =========================================================
 
 def pivot_scores_long_no_impute(
     combineddf: pd.DataFrame,
-    drop_rows_missing_ss: bool = False,
-    drop_rows_all_scores_missing: bool = True,
 ) -> pd.DataFrame:
-    """
-    Wide -> long without imputation.
-    Score fields end with _{SS, PLCODE, PLDESC, TESTNAME, TESTDATE, RETEST}.
-    SUBJECT = part before the last underscore.
-    """
-
+    """Pivot subject score fields from wide to long without dropping rows."""
     df = combineddf.copy()
 
-    # Identify subject score columns strictly by suffix (case-insensitive)
     suffix_pattern = re.compile(
         rf"^(?P<subject>.+)_(?P<suffix>{'|'.join(SUFFIXES)})$",
-        re.IGNORECASE
+        re.IGNORECASE,
     )
 
-    score_cols: List[str] = []
+    score_columns: List[str] = []
     subjects: List[str] = []
-    col_to_suffix: dict = {}
+    column_to_subject_suffix = {}
 
-    for c in df.columns:
-        m = suffix_pattern.match(str(c))
-        if m:
-            score_cols.append(c)
-            subj = m.group("subject")
-            suf = m.group("suffix").upper()
-            col_to_suffix[c] = (subj, suf)
-            subjects.append(subj)
+    for column in df.columns:
+        match = suffix_pattern.match(str(column))
+        if match:
+            subject = match.group("subject")
+            suffix = match.group("suffix").upper()
+            score_columns.append(column)
+            subjects.append(subject)
+            column_to_subject_suffix[column] = (subject, suffix)
 
     subjects = sorted(pd.unique(subjects))
-
-    # All non-score columns (uppercase now)
-    non_subject_fields = [c for c in df.columns if c not in score_cols]
-
+    non_subject_fields = [
+        column for column in df.columns if column not in score_columns
+    ]
     long_parts = []
 
-    for subj in subjects:
-        subject_cols = [c for c in score_cols if col_to_suffix[c][0] == subj]
+    for subject in subjects:
+        subject_columns = [
+            column
+            for column in score_columns
+            if column_to_subject_suffix[column][0] == subject
+        ]
 
-        temp = df[non_subject_fields + subject_cols].copy()
-        temp["SUBJECT"] = subj
+        temp = df[non_subject_fields + subject_columns].copy()
+        temp["SUBJECT"] = subject
+        temp = temp.rename(
+            columns={
+                column: column_to_subject_suffix[column][1]
+                for column in subject_columns
+            }
+        )
 
-        # Rename subject columns to suffix only
-        rename_map = {c: col_to_suffix[c][1] for c in subject_cols}
-        temp = temp.rename(columns=rename_map)
-
-        # Ensure all expected suffix columns exist
-        for suf in SUFFIXES:
-            if suf not in temp.columns:
-                temp[suf] = pd.NA
+        for suffix in SUFFIXES:
+            if suffix not in temp.columns:
+                temp[suffix] = pd.NA
 
         temp = temp[non_subject_fields + ["SUBJECT"] + SUFFIXES]
         long_parts.append(temp)
@@ -85,108 +330,41 @@ def pivot_scores_long_no_impute(
     if not long_parts:
         out = df[non_subject_fields].copy()
         out["SUBJECT"] = pd.NA
-        for suf in SUFFIXES:
-            out[suf] = pd.NA
+        for suffix in SUFFIXES:
+            out[suffix] = pd.NA
         return out
 
     long_df = pd.concat(long_parts, ignore_index=True)
-
-    # Clean blank strings → NA
-    long_df[SUFFIXES] = long_df[SUFFIXES].replace(r"^\s*$", pd.NA, regex=True)
-
-    # Drop rules
-    if drop_rows_all_scores_missing:
-        long_df = long_df.dropna(subset=SUFFIXES, how="all")
-
-    if drop_rows_missing_ss:
-        long_df = long_df.dropna(subset=["SS"])
-
+    existing_suffixes = [
+        suffix for suffix in SUFFIXES if suffix in long_df.columns
+    ]
+    long_df[existing_suffixes] = long_df[existing_suffixes].replace(
+        r"^\s*$",
+        pd.NA,
+        regex=True,
+    )
     return long_df
 
 
-def _normalize_strings(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Normalize missing values and uppercase column headers.
-    """
-    df = df.copy()
-
-    df = df.where(pd.notna(df), pd.NA)
-    df = df.replace(r"^\s*$", pd.NA, regex=True)
-    df = df.astype("string")
-
-    # Uppercase column headers
-    df.columns = [str(c).upper() for c in df.columns]
-
-    return df
-
-
-def rename_columns_upper_with_prefix(df: pd.DataFrame, prefix: str = "D_") -> pd.DataFrame:
-    """
-    Convert all column names to uppercase and prepend prefix.
-    """
-    df = df.copy()
-    df.columns = [f"{prefix}{str(col).strip().upper()}" for col in df.columns]
-    return df
-
-
-# ---------------------------------------------------------
-# Load wide combined file (now uppercase headers)
-# ---------------------------------------------------------
-
-if "combinedDf" in globals() and isinstance(combinedDf, pd.DataFrame):
-    df_wide = combinedDf
-else:
-    df_wide = pd.read_excel(COMBINED_FILE, dtype=str, engine="openpyxl")
-    df_wide = _normalize_strings(df_wide)
-
-
-# ==============================================================
-# IDENTIFY EXACT DUPLICATES IN THE WIDE COMBINED FILE
-#
-# Compare the records exactly as they exist in the combined file,
-# excluding fields created by create_combined_file.py and common
-# generated index/row-number fields. The first occurrence is kept;
-# every later occurrence is marked for removal after the long pivot.
-# ==============================================================
+# =========================================================
+# EXACT DUPLICATES IN THE WIDE FILE
+# =========================================================
 
 def mark_exact_duplicates_in_combined_file(
     df: pd.DataFrame,
     ignored_columns: Optional[List[str]] = None,
 ) -> Tuple[pd.DataFrame, List[str]]:
-    """
-    Mark exact duplicate rows in the wide combined district file.
-
-    Duplicate comparison excludes ingestion metadata created by
-    create_combined_file.py, including FILENAMEFROMDISTRICT and
-    AGENCYCODE, plus typical generated index and row-number fields.
-
-    The first row in each exact-duplicate group is retained. Every
-    subsequent row receives EXACT_DUPLICATE=True. This helper column
-    is carried through the wide-to-long pivot and used to append
-    'exact_duplicate' to FLAG_REASON.
-
-    Returns
-    -------
-    df : pd.DataFrame
-        Copy of the input with an EXACT_DUPLICATE Boolean column.
-    comparison_columns : list[str]
-        Columns used for exact-duplicate comparison.
-    """
+    """Mark later copies of exact wide-file duplicates."""
     df = df.copy()
 
     default_ignored = {
-        # Fields explicitly created by create_combined_file.py
         "FILENAMEFROMDISTRICT",
         "AGENCYCODE",
         "AGENCY_CODE",
-
-        # Common provenance/source-file variants
         "FILENAME_FROM_DISTRICT",
         "SOURCE_FILENAME",
         "SOURCEFILE",
         "SOURCE_FILE",
-
-        # Common generated index/row-number columns
         "INDEX",
         "LEVEL_0",
         "ROWNUM",
@@ -202,14 +380,13 @@ def mark_exact_duplicates_in_combined_file(
 
     if ignored_columns:
         default_ignored.update(
-            str(col).strip().upper()
-            for col in ignored_columns
+            str(column).strip().upper()
+            for column in ignored_columns
         )
 
     def is_generated_or_ignored(column_name: str) -> bool:
-        col = str(column_name).strip().upper()
-
-        if col in default_ignored:
+        normalized = str(column_name).strip().upper()
+        if normalized in default_ignored:
             return True
 
         generated_patterns = [
@@ -221,167 +398,115 @@ def mark_exact_duplicates_in_combined_file(
             r"^SOURCE_?FILE(?:NAME)?$",
             r"^FILE_?NAME_?FROM_?DISTRICT$",
         ]
-
-        return any(
-            re.fullmatch(pattern, col)
-            for pattern in generated_patterns
-        )
+        return any(re.fullmatch(pattern, normalized) for pattern in generated_patterns)
 
     comparison_columns = [
-        col
-        for col in df.columns
-        if not is_generated_or_ignored(col)
-        and str(col).strip().upper() != "EXACT_DUPLICATE"
+        column
+        for column in df.columns
+        if not is_generated_or_ignored(column)
+        and str(column).strip().upper() not in {
+            "EXACT_DUPLICATE",
+            "FLAG_REASON",
+            "FLAGGED_REASON",
+        }
     ]
 
     if not comparison_columns:
-        raise ValueError(
-            "No columns remain for exact-duplicate comparison."
-        )
+        raise ValueError("No columns remain for exact-duplicate comparison.")
 
-    # keep='first': retain the first row and mark only later copies.
     df["EXACT_DUPLICATE"] = df.duplicated(
         subset=comparison_columns,
         keep="first",
     )
 
-    duplicate_count = int(df["EXACT_DUPLICATE"].sum())
-
     print(
-        f"Exact duplicate comparison used "
+        "Exact duplicate comparison used "
         f"{len(comparison_columns):,} columns."
     )
     print(
-        f"Exact duplicate combined-file rows marked for removal: "
-        f"{duplicate_count:,}"
+        "Exact duplicate wide-file rows marked: "
+        f"{int(df['EXACT_DUPLICATE'].sum()):,}"
     )
-
     return df, comparison_columns
 
 
-df_wide, exact_duplicate_comparison_columns = (
-    mark_exact_duplicates_in_combined_file(df_wide)
-)
+# =========================================================
+# SCORE VALIDATION
+# =========================================================
 
-# ---------------------------------------------------------
-# Pivot1:   wide → long
-#
-# this pivot only keeps if ss is populated
-# TX, eg., has records where one score is needed only--
-# sometimes in SS other times in plcode, pldesc
-# ---------------------------------------------------------
+def is_invalid_score_value(value) -> bool:
+    """Return True for missing/placeholder/zero score-field values."""
+    if value is None or pd.isna(value):
+        return True
 
-# df_long = pivot_scores_long_no_impute(
-#     df_wide,
-#     drop_rows_missing_ss=True,
-#     drop_rows_all_scores_missing=True
-# )
+    text = str(value).strip()
+    if not text:
+        return True
 
-# df_long = df_long.reset_index(drop=True)
+    normalized = re.sub(r"\s+", " ", text.upper()).strip()
 
+    if normalized in INVALID_SCORE_TEXT_VALUES:
+        return True
+    if re.fullmatch(r"-+", normalized):
+        return True
+    if re.fullmatch(r"\.+", normalized):
+        return True
 
-#---------------------------------------------------------
-#
-# PIVOT2:  KEEP ANY RECORDS WITH ONE OF THE SS/PLCODE/PLDESC
-# NON-NULL 
-# TODO: AND NOT (N/A, --, ETC.)
-#---------------------------------------------------------
+    try:
+        numeric_value = float(normalized.replace(",", ""))
+        if np.isfinite(numeric_value) and numeric_value == 0:
+            return True
+    except (TypeError, ValueError):
+        pass
 
-df_long = pivot_scores_long_no_impute(
-    df_wide,
-    drop_rows_missing_ss=False,      # don't let the function drop SS-missing rows
-    drop_rows_all_scores_missing=False
-)
-
-# Keep rows where at least one of SS, PLCODE, PLDESC, or PL is populated
-score_cols = [c for c in ['SS', 'PLCODE', 'PLDESC', 'PL'] if c in df_long.columns]
-
-df_long = df_long.loc[
-    df_long[score_cols].notna().any(axis=1)
-].reset_index(drop=True)
+    return False
 
 
-
-
-# ---------------------------------------------------------
-# Rename long columns with prefix (already uppercase)
-# ---------------------------------------------------------
-
-df_long = rename_columns_upper_with_prefix(df_long)
-
-
-
-
-
-
-
-#================================================================================================================
-# PREVIOUSLY FROM CLEAN_LONG_DF.PY
-# JOINING TO REDUCE PARQUET OUTPUT
-#================================================================================================================
-
-
-
-#-----------------------------------------------------------------
-# helper function: flag for removal
-#-----------------------------------------------------------------
-def flag_for_removal(df, rows_to_flag, reason):
+def get_score_validation_masks(
+    df: pd.DataFrame,
+    score_columns: Optional[List[str]] = None,
+) -> Tuple[pd.Series, pd.Series]:
     """
-    Flags records in df based on rows_to_flag.
-    
-    - If a row is flagged, append reason to existing FLAG_REASON using '|'.
-    - If a row is not flagged, FLAG_REASON becomes NA.
+    Return masks for all-invalid scores and exactly-one-valid score.
+
+    Zero valid fields: exclude from df_long and removed_records.
+    Exactly one valid field: retain and flag invalid_score.
+    Two or more valid fields: retain without invalid_score.
     """
+    if score_columns is None:
+        score_columns = ["D_SS", "D_PLCODE", "D_PLDESC", "D_PL"]
 
-    df = df.copy()
+    available_score_columns = [
+        column for column in score_columns if column in df.columns
+    ]
 
-    # Boolean mask for rows to flag
-    mask = df.index.isin(rows_to_flag.index)
+    if not available_score_columns:
+        raise ValueError(
+            "None of the expected score columns were found. "
+            f"Expected one or more of: {score_columns}"
+        )
 
-    # Initialize FLAG_REASON as NA for all rows
-    df["FLAG_REASON"] = pd.NA
-
-    # For flagged rows:
-    # If FLAG_REASON already exists, append with '|'
-    # Otherwise, set to the new reason
-    df.loc[mask, "FLAG_REASON"] = (
-        df.loc[mask, "FLAG_REASON"]
-        .fillna(reason)                      # if NA, set reason
-        .astype(str)
-        .apply(lambda x: x if x == reason else f"{x}|{reason}")
+    invalid_score_matrix = pd.DataFrame(
+        {
+            column: df[column].apply(is_invalid_score_value)
+            for column in available_score_columns
+        },
+        index=df.index,
     )
 
-    return df
+    valid_score_count = (~invalid_score_matrix).sum(axis=1)
+    all_scores_invalid = valid_score_count.eq(0)
+    retained_with_invalid_score = valid_score_count.eq(1)
 
-
-def append_flag_reason(df, mask, reason):
-    """
-    Append a reason to FLAG_REASON.
-
-    If FLAG_REASON is null:
-        reason
-
-    If FLAG_REASON already contains a reason:
-        existing_reason|reason
-    """
-
-    current = df.loc[mask, "FLAG_REASON"]
-
-    df.loc[mask, "FLAG_REASON"] = np.where(
-        current.isna(),
-        reason,
-        current.astype(str) + "|" + reason
+    return (
+        all_scores_invalid.astype(bool),
+        retained_with_invalid_score.astype(bool),
     )
 
-    return df
 
-
-#==============================================================
-# GLOBAL GRADE MAP (used for df_long + settings_xl)
-#==============================================================
-
-import re
-import pandas as pd
+# =========================================================
+# GRADE CLEANING
+# =========================================================
 
 grade_map = {
     1: ["1", "1ST", "ONE", "FIRST", "GRADE 1", "GRADE 01"],
@@ -396,819 +521,633 @@ grade_map = {
     10: ["10", "10TH", "TEN", "TENTH", "GRADE 10"],
     11: ["11", "11TH", "ELEVEN", "ELEVENTH", "GRADE 11"],
     12: ["12", "12TH", "TWELVE", "TWELFTH", "GRADE 12"],
-    # skip 13
     14: ["K", "KINDERGARTEN", "GRADE K"],
 }
 
 
-#==============================================================
-# BUILD NORMALIZED LOOKUP MAP
-#==============================================================
-
-def normalize_grade_text(value):
-    """
-    Standardize grade text for matching.
-
-    Examples:
-        ' Grade 04 '  -> 'GRADE04'
-        'grade    4'  -> 'GRADE4'
-        'Grade\t4'    -> 'GRADE4'
-        ' fourth '    -> 'FOURTH'
-    """
-    s = str(value).strip().upper()
-
-    # remove ALL whitespace
-    s = re.sub(r"\s+", "", s)
-
-    return s
+def normalize_grade_text(value) -> str:
+    """Normalize grade text for lookup."""
+    return re.sub(r"\s+", "", str(value).strip().upper())
 
 
-reverse_map = {}
+reverse_grade_map = {
+    normalize_grade_text(variant): grade_number
+    for grade_number, variants in grade_map.items()
+    for variant in variants
+}
 
-for grade_num, variants in grade_map.items():
-    for variant in variants:
-        reverse_map[normalize_grade_text(variant)] = grade_num
 
-
-#==============================================================
-# CLEAN GRADE COLUMN
-#==============================================================
-
-def add_clean_grade_column(df: pd.DataFrame, col: str):
+def add_clean_grade_column(
+    df: pd.DataFrame,
+    column: str,
+) -> Tuple[pd.DataFrame, List]:
+    """Create nullable Int64 grade-clean column."""
     df = df.copy()
-    clean_col = f"{col}_CLEAN"
+    clean_column = f"{column}_CLEAN"
 
-    def clean_grade(raw):
-
-        #--------------------------------------
-        # Null handling
-        #--------------------------------------
-        if pd.isna(raw):
+    def clean_grade(raw_value):
+        if pd.isna(raw_value):
             return pd.NA
 
-        s_raw = str(raw).strip()
-        s_norm = normalize_grade_text(raw)
+        raw_text = str(raw_value).strip()
+        normalized_text = normalize_grade_text(raw_value)
 
-        #--------------------------------------
-        # Numeric conversion first
-        #
-        # Handles:
-        #   4
-        #   4.0
-        #   "4"
-        #   "04"
-        #   "004"
-        #   "4.0"
-        #--------------------------------------
         try:
-            num = float(s_raw)
-
-            if num.is_integer():
-                num = int(num)
-
-                if num in grade_map:
-                    return num
-
+            numeric_grade = float(raw_text)
+            if numeric_grade.is_integer():
+                numeric_grade = int(numeric_grade)
+                if numeric_grade in grade_map:
+                    return numeric_grade
         except (ValueError, TypeError):
             pass
 
-        #--------------------------------------
-        # Text lookup second
-        #
-        # Handles:
-        #   GRADE4
-        #   GRADE 4
-        #   GRADE    04
-        #   FOURTH
-        #   KINDERGARTEN
-        #   K
-        #--------------------------------------
-        return reverse_map.get(s_norm, pd.NA)
+        return reverse_grade_map.get(normalized_text, pd.NA)
 
-    df[clean_col] = (
-        df[col]
-        .apply(clean_grade)
-        .astype("Int64")
-    )
-
-    return df, df[clean_col].tolist()
+    df[clean_column] = df[column].apply(clean_grade).astype("Int64")
+    return df, df[clean_column].tolist()
 
 
-#==============================================================
-# APPLY
-#==============================================================
-# TODO: add to QA checks early and compare D_GRADE vs D_GRADE_CLEAN
+# =========================================================
+# INTEGER AND DATE CLEANING
+# =========================================================
 
-df_long.D_GRADE.value_counts(dropna=False)
-
-df_long, cleaned = add_clean_grade_column(df_long, "D_GRADE")
-
-print(df_long[["D_GRADE", "D_GRADE_CLEAN"]
-              ].drop_duplicates().sort_values(["D_GRADE"])
-
-)
-
-
-
-
-
-#==============================================================
-# CLEAN INT COLUMNS
-# ADD *_CLEAN column coerced to Int64
-#==============================================================
-
-def add_clean_int_columns(df: pd.DataFrame, cols: list) -> pd.DataFrame:
+def add_clean_int_columns(
+    df: pd.DataFrame,
+    columns: List[str],
+) -> pd.DataFrame:
+    """Create nullable Int64 clean columns without dropping records."""
     df = df.copy()
-    for col in cols:
-        clean_col = f"{col}_CLEAN"
-        series = df[col].replace(r"^\s*$", pd.NA, regex=True)
-        df[clean_col] = pd.to_numeric(series, errors="coerce").astype("Int64")
+
+    for column in columns:
+        if column not in df.columns:
+            print(f"Skipping missing integer column: {column}")
+            continue
+
+        clean_column = f"{column}_CLEAN"
+        series = df[column].replace(r"^\s*$", pd.NA, regex=True)
+        df[clean_column] = pd.to_numeric(
+            series,
+            errors="coerce",
+        ).astype("Int64")
+
     return df
 
-df_long = add_clean_int_columns(
-    df_long,
-    # cols=["D_LOCAL_STID", "D_STATE_STID", "D_AGENCYCODE", "D_SS", "D_PLCODE" ]
-    cols=["D_LOCAL_STID", "D_STATE_STID", "D_AGENCYCODE", "D_SS" ]
-)
 
-
-
-#==============================================================
-# CLEAN DATE COLUMNS
-#==============================================================
-
-def _parse_term_to_year(term: str) -> Optional[int]:
-    if term is None or pd.isna(term):
-        return None
-    m = re.search(r"(\d{4})", str(term))
-    return int(m.group(1)) if m else None
-
-
-def _safe_parse_date(raw: str) -> Optional[datetime]:
-    if raw is None or pd.isna(raw):
+def _safe_parse_date(raw_value) -> Optional[datetime]:
+    """Parse common district date formats."""
+    if raw_value is None or pd.isna(raw_value):
         return None
 
-    s = str(raw).strip()
-    s = re.sub(r"\s+\d{1,2}:\d{2}(:\d{2})?$", "", s)
+    text = str(raw_value).strip()
+    text = re.sub(r"\s+\d{1,2}:\d{2}(:\d{2})?$", "", text)
 
-    # digits-only formats
-    if re.fullmatch(r"\d+", s):
-        digits = s
+    if re.fullmatch(r"\d+", text):
+        digits = text
 
-        # 8-digit mmddyyyy or yyyymmdd
         if len(digits) == 8:
-            mm = int(digits[0:2])
-            dd = int(digits[2:4])
-            yyyy = int(digits[4:8])
-            try:
-                if 1 <= mm <= 12 and 1 <= dd <= 31:
-                    return datetime(yyyy, mm, dd)
-            except:
-                pass
+            candidates = [
+                (int(digits[4:8]), int(digits[0:2]), int(digits[2:4])),
+                (int(digits[0:4]), int(digits[4:6]), int(digits[6:8])),
+            ]
+            for year, month, day in candidates:
+                try:
+                    return datetime(year, month, day)
+                except ValueError:
+                    pass
 
-            yyyy2 = int(digits[0:4])
-            mm2 = int(digits[4:6])
-            dd2 = int(digits[6:8])
-            try:
-                if 1 <= mm2 <= 12 and 1 <= dd2 <= 31:
-                    return datetime(yyyy2, mm2, dd2)
-            except:
-                pass
-
-        # 7-digit mddyyyy
         if len(digits) == 7:
-            mm = int(digits[0])
-            dd = int(digits[1:3])
-            yyyy = int(digits[3:7])
             try:
-                if 1 <= mm <= 12 and 1 <= dd <= 31:
-                    return datetime(yyyy, mm, dd)
-            except:
+                return datetime(
+                    int(digits[3:7]),
+                    int(digits[0]),
+                    int(digits[1:3]),
+                )
+            except ValueError:
                 pass
 
-        # 6-digit mmddyy
         if len(digits) == 6:
-            mm = int(digits[0:2])
-            dd = int(digits[2:4])
-            yy = int(digits[4:6])
-            yyyy = 1900 + yy if yy > 30 else 2000 + yy
+            month = int(digits[0:2])
+            day = int(digits[2:4])
+            two_digit_year = int(digits[4:6])
+            year = 1900 + two_digit_year if two_digit_year > 30 else 2000 + two_digit_year
             try:
-                if 1 <= mm <= 12 and 1 <= dd <= 31:
-                    return datetime(yyyy, mm, dd)
-            except:
+                return datetime(year, month, day)
+            except ValueError:
                 pass
 
-    # common formats
-    fmts = [
-        "%m/%d/%Y", "%m-%d-%Y", "%Y-%m-%d", "%Y/%m/%d",
-        "%m/%d/%y", "%Y%m%d", "%m%d%Y", "%m%d%y"
+    formats = [
+        "%m/%d/%Y",
+        "%m-%d-%Y",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%m/%d/%y",
+        "%Y%m%d",
+        "%m%d%Y",
+        "%m%d%y",
     ]
 
-    for fmt in fmts:
+    for date_format in formats:
         try:
-            return datetime.strptime(s, fmt)
-        except:
+            return datetime.strptime(text, date_format)
+        except ValueError:
             continue
 
     return None
 
 
-def add_clean_date_columns(df: pd.DataFrame, date_cols: list) -> pd.DataFrame:
+def add_clean_date_columns(
+    df: pd.DataFrame,
+    date_columns: List[str],
+) -> pd.DataFrame:
+    """Create MM/DD/YYYY clean date columns without removing records."""
     df = df.copy()
-    term_year = df["D_TERM"].apply(_parse_term_to_year)
-    today_year = datetime.now().year
+    current_year = datetime.now().year
 
-    for col in date_cols:
-        clean_col = f"{col}_CLEAN"
-        out = []
+    for column in date_columns:
+        if column not in df.columns:
+            print(f"Skipping missing date column: {column}")
+            continue
 
-        for raw, term_y in zip(df[col], term_year):
-            dt = _safe_parse_date(raw)
+        clean_column = f"{column}_CLEAN"
+        output_values = []
 
-            if dt is None:
-                out.append(pd.NA)
+        for raw_value in df[column]:
+            parsed_date = _safe_parse_date(raw_value)
+
+            if parsed_date is None:
+                output_values.append(pd.NA)
                 continue
 
-            # DOB age rule
-            if col == "D_DOB":
-                age = today_year - dt.year
+            if column == "D_DOB":
+                age = current_year - parsed_date.year
                 if age < 4 or age > 25:
-                    out.append(pd.NA)
+                    output_values.append(pd.NA)
                     continue
 
-            out.append(dt.strftime("%m/%d/%Y"))
+            output_values.append(parsed_date.strftime("%m/%d/%Y"))
 
-        df[clean_col] = pd.Series(out, dtype="string")
+        df[clean_column] = pd.Series(
+            output_values,
+            index=df.index,
+            dtype="string",
+        )
 
     return df
 
 
-df_long = add_clean_date_columns(df_long, ["D_TESTDATE", "D_DOB"])
-
-
-
-
-
-#==============================================================
-# PLACE *_CLEAN COLUMNS NEXT TO ORIGINALS
-#==============================================================
-
-def place_all_clean_columns_next_to_originals(df: pd.DataFrame) -> pd.DataFrame:
+def place_all_clean_columns_next_to_originals(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Place each *_CLEAN column immediately after its base column."""
     df = df.copy()
-    cols = list(df.columns)
-    clean_cols = [c for c in cols if c.endswith("_CLEAN")]
+    columns = list(df.columns)
+    clean_columns = [
+        column for column in columns if column.endswith("_CLEAN")
+    ]
 
-    for clean in clean_cols:
-        original = clean[:-6]
-        if original not in cols:
+    for clean_column in clean_columns:
+        original_column = clean_column[:-6]
+        if original_column not in columns:
             continue
-        cols.remove(clean)
-        insert_pos = cols.index(original) + 1
-        cols.insert(insert_pos, clean)
+        columns.remove(clean_column)
+        columns.insert(columns.index(original_column) + 1, clean_column)
 
-    return df[cols]
-
-df_long = place_all_clean_columns_next_to_originals(df_long)
-
-df_long[['D_GRADE','D_GRADE_CLEAN']].value_counts(dropna = False)
+    return df[columns]
 
 
-#==============================================================
-# MERGE SETTINGS to make merged_valid dataframe with Settings
-#==============================================================
+# =========================================================
+# LOAD WIDE COMBINED FILE
+# =========================================================
 
-def parse_study_grades(raw):
-    if raw is None or pd.isna(raw):
-        return []
-
-    s = str(raw).upper().strip()
-    tokens = re.split(r"[,\s;]+", s)
-    out = []
-
-    for t in tokens:
-        if not t:
-            continue
-
-        # ranges like 3-5
-        if "-" in t:
-            a, b = t.split("-", 1)
-            a = a.strip()
-            b = b.strip()
-            if a in reverse_map and b in reverse_map:
-                lo = reverse_map[a]
-                hi = reverse_map[b]
-                out.extend(range(lo, hi + 1))
-            continue
-
-        # direct lookup
-        if t in reverse_map:
-            out.append(reverse_map[t])
-
-    return sorted(set(out))
-
-
-# prefix settings columns
-settings_prefixed = settings_xl.rename(columns=lambda c: f"SETTINGS_{c}")
-
-# expand STUDY_GRADES
-settings_prefixed["SETTINGS_GRADE_LIST"] = (
-    settings_prefixed["SETTINGS_STUDY_GRADES"].apply(parse_study_grades)
-)
-
-
-
-# ================================================================
-# 1. MERGE SETTINGS ON SUBJECT/GRADE 
-#    (LEFT MERGE TO DETECT DROPPED SUBJECTS)
-# ================================================================
-
-merged = df_long.merge(
-    settings_prefixed,
-    left_on="D_SUBJECT",
-    right_on="SETTINGS_D_SUBJECT",
-    how="left",
-    indicator=True
-)
-
-# Rows missing in settings (subject not found)
-merged_dropped_subjects = merged[merged["_merge"] == "left_only"].copy()
-
-# Rows that matched settings (inner behavior)
-merged_inner = merged[merged["_merge"] == "both"].copy()
-
-# Remove merge indicator
-merged_inner.drop(columns=["_merge"], inplace=True)
-merged_dropped_subjects.drop(columns=["_merge"], inplace=True)
-
-
-
-# ================================================================
-# 3. FLAG RECORDS FOR REMOVAL and reset index
-# ================================================================
-
-merged_inner["FLAG_REASON"] = pd.NA
-
-
-# ----------------------------------------------------
-# FLAG EXACT DUPLICATES FROM THE WIDE COMBINED FILE
-# ----------------------------------------------------
-# EXACT_DUPLICATE was added before the pivot. After the D_ prefix is
-# applied, the helper is D_EXACT_DUPLICATE. The first occurrence was
-# retained; only subsequent copies are flagged.
-exact_duplicate_mask = (
-    merged_inner["D_EXACT_DUPLICATE"]
-    .fillna(False)
-    .astype(bool)
-)
-
-merged_inner = append_flag_reason(
-    merged_inner,
-    exact_duplicate_mask,
-    "exact_duplicate"
-)
-
-
-# ----------------------------------------------------
-# FLAG MISSING GRADE
-# ----------------------------------------------------
-missing_grade_mask = merged_inner["D_GRADE_CLEAN"].isna()
-
-merged_inner = append_flag_reason(
-    merged_inner,
-    missing_grade_mask,
-    "missing_grade"
-)
-
-
-# ----------------------------------------------------
-# FLAG GRADE NOT IN ANY STUDY FOR SUBJECT
-# ----------------------------------------------------
-# Build a lookup of all grades valid for a subject
-# across all studies.
-
-allowed_grades_by_subject = (
-    settings_prefixed
-    .groupby("SETTINGS_D_SUBJECT")["SETTINGS_GRADE_LIST"]
-    .apply(
-        lambda x: {
-            int(g)
-            for grade_list in x.dropna()
-            for g in grade_list
-        }
+if "combinedDf" in globals() and isinstance(combinedDf, pd.DataFrame):
+    df_wide = _normalize_strings(combinedDf)
+else:
+    df_wide = pd.read_excel(
+        COMBINED_FILE,
+        dtype=str,
+        engine="openpyxl",
     )
-    .to_dict()
-)
+    df_wide = _normalize_strings(df_wide)
 
-
-grade_allowed_any_study = []
-
-for subject, grade in zip(
-    merged_inner["D_SUBJECT"],
-    merged_inner["D_GRADE_CLEAN"]
-):
-
-    if pd.isna(subject):
-        grade_allowed_any_study.append(False)
-
-    elif pd.isna(grade):
-        grade_allowed_any_study.append(False)
-
-    elif subject not in allowed_grades_by_subject:
-        grade_allowed_any_study.append(False)
-
+# Normalize an upstream FLAGGED_REASON name when supplied.
+if "FLAGGED_REASON" in df_wide.columns:
+    if "FLAG_REASON" not in df_wide.columns:
+        df_wide = df_wide.rename(columns={"FLAGGED_REASON": "FLAG_REASON"})
     else:
-        grade_allowed_any_study.append(
-            int(grade)
-            in allowed_grades_by_subject[subject]
+        df_wide = merge_flag_reason_values(
+            df_wide,
+            source_column="FLAGGED_REASON",
+            target_column="FLAG_REASON",
         )
+        df_wide = df_wide.drop(columns=["FLAGGED_REASON"], errors="ignore")
 
-merged_inner["GRADE_ALLOWED_ANY_STUDY"] = grade_allowed_any_study
+# Keep only flags that should be carried into the retained long file.
+# non-numeric_ss is deliberately excluded and recalculated later.
+if "FLAG_REASON" in df_wide.columns:
+    df_wide = filter_flag_reasons(
+        df_wide,
+        allowed_reasons=UPSTREAM_FLAGS_TO_RETAIN,
+        flag_column="FLAG_REASON",
+    )
+
+# Prevent AGENCYCODE.1 from entering the pivot.
+df_wide = drop_unwanted_duplicate_columns(df_wide)
+
+print(f"Wide combined-file rows loaded: {len(df_wide):,}")
 
 
-off_grade_mask = (
-    merged_inner["D_GRADE_CLEAN"].notna()
-    & ~merged_inner["GRADE_ALLOWED_ANY_STUDY"]
+# =========================================================
+# MARK DUPLICATES, PIVOT, AND PREFIX
+# =========================================================
+
+df_wide, exact_duplicate_comparison_columns = (
+    mark_exact_duplicates_in_combined_file(df_wide)
 )
 
-merged_inner = append_flag_reason(
-    merged_inner,
-    off_grade_mask,
-    "grade_not_in_study"
-)
+df_long = pivot_scores_long_no_impute(df_wide).reset_index(drop=True)
+print(f"Long-format rows created before removals: {len(df_long):,}")
 
-
-# ----------------------------------------------------
-# FLAG NON-NUMERIC SS
-# ----------------------------------------------------
-# D_SS contains a value but could not be converted
-# to D_SS_CLEAN.
-
-non_numeric_ss_mask = (
-    merged_inner["D_SS"].notna()
-    & merged_inner["D_SS"].astype(str).str.strip().ne("")
-    & merged_inner["D_SS_CLEAN"].isna()
-)
-
-merged_inner = append_flag_reason(
-    merged_inner,
-    non_numeric_ss_mask,
-    "non_numeric_SS"
-)
+df_long = rename_columns_upper_with_prefix(df_long)
 
 
 
-# ----------------------------------------------------
-# FLAG INCORRECT TERM
-# ----------------------------------------------------
+#==========================================================
+# iF EXISTS, CONCATENATE ADDENDUM.
+# to be used when files are provided in long format
+# or are manually created by NWEA analyst in long format.
+#===========================================================
 
-def is_incorrect_term(d_term, settings_term):
-    """
-    Flag if:
-      - term contains a year different from study year
-      - term explicitly indicates Fall/Summer/Winter
 
-    Do NOT flag:
-      - blanks
-      - unrecognized strings
-      - Spring without a year
-    """
+addendum_file = DATA_ROOT / "df_long_addendum.parquet"
 
-    if pd.isna(d_term) or pd.isna(settings_term):
-        return False
+if addendum_file.exists():
 
-    d_term = str(d_term).upper().strip()
-    settings_term = str(settings_term).strip()
+    df_long_addendum = pd.read_parquet(
+        addendum_file
+    )
 
-    # study year comes from SETTINGS_TERM (e.g. 202502)
-    m = re.match(r"^(\d{4})", settings_term)
-
-    if not m:
-        return False
-
-    study_year = int(m.group(1))
-
-    # --------------------------------------------------
-    # Explicit season detection
-    # --------------------------------------------------
-
-    spring_patterns = [
-        r"\bSPRING\b",
-        r"\bSPR\b",
-        r"\bSP\b",
-    ]
-
-    fall_patterns = [
-        r"\bFALL\b",
-        r"\bAUTUMN\b",
-        r"\bFA\b",
-        r"\bF\d{2}\b",
-    ]
-
-    summer_patterns = [
-        r"\bSUMMER\b",
-        r"\bSUM\b",
-        r"\bSU\b",
-    ]
-
-    winter_patterns = [
-        r"\bWINTER\b",
-        r"\bWIN\b",
-        r"\bWI\b",
-        r"\bW\d{2}\b",
-    ]
-
-    if any(re.search(p, d_term) for p in fall_patterns):
-        return True
-
-    if any(re.search(p, d_term) for p in summer_patterns):
-        return True
-
-    if any(re.search(p, d_term) for p in winter_patterns):
-        return True
-
-    # --------------------------------------------------
-    # YEAR DETECTION
-    # --------------------------------------------------
-
-    years_found = []
-
-    # 4-digit years
-    years_found.extend(
+    df_long = pd.concat(
         [
-            int(x)
-            for x in re.findall(r"\b20\d{2}\b", d_term)
-        ]
+            df_long,
+            df_long_addendum
+        ],
+        ignore_index=True,
+        sort=False
     )
 
-    # embedded forms like SPR2025
-    years_found.extend(
-        [
-            int(x)
-            for x in re.findall(r"20\d{2}", d_term)
-        ]
+    print(
+        f"Appended {len(df_long_addendum):,} "
+        "records from df_long_addendum.parquet"
     )
 
-    # short forms like F25 / SP25 / W25
-    years_found.extend(
-        [
-            2000 + int(x)
-            for x in re.findall(r"(?<!\d)(\d{2})(?!\d)", d_term)
-            if 0 <= int(x) <= 50
-        ]
+else:
+
+    print(
+        "df_long_addendum.parquet not found. "
+        "Using df_long only."
     )
 
-    years_found = list(set(years_found))
-
-    if years_found:
-
-        if study_year not in years_found:
-
-            # allow school year notation such as 2024-25
-            if (
-                study_year in years_found
-                or study_year - 1 in years_found
-            ):
-                pass
-            else:
-                return True
-
-    return False
 
 
-incorrect_term_mask = [
-    is_incorrect_term(d_term, settings_term)
-    for d_term, settings_term in zip(
-        merged_inner["D_TERM"],
-        merged_inner["SETTINGS_TERM"]
+# =========================================================
+# INITIALIZE FLAG AND REMOVAL FIELDS
+# =========================================================
+
+df_long["FLAG_REASON"] = pd.Series(
+    pd.NA,
+    index=df_long.index,
+    dtype="string",
+)
+
+for upstream_flag_column in ["D_FLAG_REASON", "D_FLAGGED_REASON"]:
+    df_long = merge_flag_reason_values(
+        df_long,
+        source_column=upstream_flag_column,
+        target_column="FLAG_REASON",
     )
-]
 
-merged_inner = append_flag_reason(
-    merged_inner,
-    incorrect_term_mask,
-    "incorrect_term"
+# Retain only approved upstream flags. This strips any upstream
+# non-numeric_ss so that it can be recalculated on final retained rows.
+df_long = filter_flag_reasons(
+    df_long,
+    allowed_reasons=UPSTREAM_FLAGS_TO_RETAIN,
+    flag_column="FLAG_REASON",
+)
+
+df_long = df_long.drop(
+    columns=["D_FLAG_REASON", "D_FLAGGED_REASON"],
+    errors="ignore",
+)
+
+df_long["REMOVAL_REASON"] = pd.NA
+df_long["REMOVE_RECORD"] = False
+
+
+# =========================================================
+# EXACT-DUPLICATE REMOVAL
+# =========================================================
+
+if "D_EXACT_DUPLICATE" in df_long.columns:
+    exact_duplicate_mask = (
+        df_long["D_EXACT_DUPLICATE"].fillna(False).astype(bool)
+    )
+else:
+    exact_duplicate_mask = pd.Series(False, index=df_long.index, dtype=bool)
+
+df_long = append_removal_reason(
+    df=df_long,
+    mask=exact_duplicate_mask,
+    reason="exact_duplicate",
 )
 
 
+# =========================================================
+# SCORE-PRESENCE VALIDATION
+# =========================================================
 
-# ----------------------------------------------------
-# FLAG TEST DATE OUT OF RANGE
-# ----------------------------------------------------
+(
+    all_scores_invalid_mask,
+    retained_invalid_score_mask,
+) = get_score_validation_masks(
+    df_long,
+    score_columns=["D_SS", "D_PLCODE", "D_PLDESC", "D_PL"],
+)
 
-def is_test_date_out_of_range(test_date, settings_term):
+# This flag applies only to candidate retained records.
+invalid_score_flag_mask = (
+    retained_invalid_score_mask
+    & ~df_long["REMOVE_RECORD"]
+)
 
-    if pd.isna(test_date) or pd.isna(settings_term):
-        return False
-
-    try:
-        test_dt = pd.to_datetime(test_date)
-    except Exception:
-        return False
-
-    settings_term = str(settings_term).strip()
-
-    m = re.match(r"^(\d{4})", settings_term)
-
-    if not m:
-        return False
-
-    study_year = int(m.group(1))
-
-    valid_start = pd.Timestamp(study_year, 2, 1)
-    valid_end = pd.Timestamp(study_year, 6, 30)
-
-    return (
-        test_dt < valid_start
-        or test_dt > valid_end
-    )
-
-
-test_date_out_of_range_mask = [
-    is_test_date_out_of_range(test_date, settings_term)
-    for test_date, settings_term in zip(
-        merged_inner["D_TESTDATE_CLEAN"],
-        merged_inner["SETTINGS_TERM"]
-    )
-]
-
-merged_inner = append_flag_reason(
-    merged_inner,
-    test_date_out_of_range_mask,
-    "test_date_out_of_range"
+df_long = append_flag_reason(
+    df=df_long,
+    mask=invalid_score_flag_mask,
+    reason="invalid_score",
 )
 
 
+# =========================================================
+# CREATE REMOVED RECORDS
+# =========================================================
 
-
-
-# ----------------------------------------------------
-# CREATE FLAGGED FOR REMOVAL TABLE
-# ----------------------------------------------------
-flagged_for_removal = (merged_inner.loc[
-        merged_inner["FLAG_REASON"].notna()]
-            .copy()
-            .reset_index(drop = True)
-)
-# Move FLAG_REASON to first column
-if "FLAG_REASON" in flagged_for_removal.columns:
-    flag_reason = flagged_for_removal.pop("FLAG_REASON")
-    flagged_for_removal.insert(0, "FLAG_REASON", flag_reason)
-
-
-# The removal reason contains the relevant information, so omit the
-# internal duplicate helper from the saved flagged table.
-flagged_for_removal = flagged_for_removal.drop(
-    columns=["D_EXACT_DUPLICATE"],
-    errors="ignore"
+# All-invalid-score rows are excluded from removed_records by design.
+save_in_removed_records_mask = (
+    df_long["REMOVE_RECORD"]
+    & ~all_scores_invalid_mask
 )
 
-
-# ----------------------------------------------------
-# REMOVE FLAGGED RECORDS BEFORE STUDY FILTERING
-# ----------------------------------------------------
-merged_inner = merged_inner.loc[
-    merged_inner["FLAG_REASON"].isna()
-].copy()
-
-
-# ================================================================
-# 4. FILTER ROWS WHERE GRADE IS ALLOWED
-# ================================================================
-
-merged_inner["GRADE_ALLOWED"] = merged_inner.apply(
-    lambda r: (
-        pd.notna(r["D_GRADE_CLEAN"]) and
-        isinstance(r["SETTINGS_GRADE_LIST"], (list, tuple)) and
-        r["D_GRADE_CLEAN"] in r["SETTINGS_GRADE_LIST"]
-    ),
-    axis=1
-)
-
-# Valid rows
-merged_valid = (
-    merged_inner[
-        merged_inner["GRADE_ALLOWED"]
-    ]
+removed_records = (
+    df_long.loc[save_in_removed_records_mask]
     .copy()
     .reset_index(drop=True)
 )
 
+if "REMOVAL_REASON" in removed_records.columns:
+    removal_reason = removed_records.pop("REMOVAL_REASON")
+    removed_records.insert(0, "REMOVAL_REASON", removal_reason)
 
-# ================================================================
-# 5. CLEAN SETTINGS_STUDY_GRADES
-# ================================================================
-
-merged_valid["SETTINGS_STUDY_GRADES"] = (
-    merged_valid["SETTINGS_STUDY_GRADES"]
-    .apply(lambda x: None if pd.isna(x) else str(x).strip())
+removed_records = removed_records.drop(
+    columns=["D_EXACT_DUPLICATE", "REMOVE_RECORD"],
+    errors="ignore",
 )
 
 
-# ================================================================
-# 6. INVALID ROWS FOR QA
-# ================================================================
+# =========================================================
+# CREATE RETAINED DF_LONG
+# =========================================================
 
-keep_cols = [
-    "D_DISTRICTNAME",
-    "D_SCHOOLNAME",
-    "D_FILENAMEFROMDISTRICT",
-    "D_SUBJECT",
-    "SETTINGS_D_MAPGROWTH_TEST_NAME",
-    "D_GRADE",
-    "D_GRADE_CLEAN",
-    "SETTINGS_STUDY_GRADES",
-    "FLAG_REASON"
-]
+retain_long_mask = (
+    ~df_long["REMOVE_RECORD"]
+    & ~all_scores_invalid_mask
+)
 
-merged_invalid = merged_inner.loc[
-    ~merged_inner["GRADE_ALLOWED"],
-    [c for c in keep_cols if c in merged_inner.columns]
-].copy().reset_index(drop=True)
+df_long = (
+    df_long.loc[retain_long_mask]
+    .copy()
+    .reset_index(drop=True)
+)
 
-
-# flagged_for_removal = flagged_for_removal[
-#     [c for c in keep_cols if c in flagged_for_removal.columns]
-# ].copy()
-
-
-# ================================================================
-# 7. FINAL CLEANUP
-# ================================================================
-
-df_long = merged_valid.drop(
+df_long = df_long.drop(
     columns=[
-        "SETTINGS_NOTES",
-        "GRADE_ALLOWED_ANY_STUDY",
-        "GRADE_ALLOWED",
         "D_EXACT_DUPLICATE",
+        "REMOVE_RECORD",
+        "REMOVAL_REASON",
     ],
-    errors="ignore"
+    errors="ignore",
 )
 
 
-def sanitize_object_columns(df):
-    df = df.copy()
+# =========================================================
+# CLEAN AND FLAG RETAINED RECORDS
+# =========================================================
 
-    def sanitize_value(x):
-        # None / NaN
-        if x is None or (isinstance(x, float) and pd.isna(x)):
-            return None
+if "D_GRADE" in df_long.columns:
+    print("\nOriginal grade value counts:")
+    print(df_long["D_GRADE"].value_counts(dropna=False))
 
-        # numpy arrays or python lists → convert to string
-        if isinstance(x, (list, tuple, np.ndarray)):
-            return str(list(x))  # convert ndarray → list → string
+    df_long, cleaned_grades = add_clean_grade_column(df_long, "D_GRADE")
 
-        # everything else → convert to string
-        return str(x).strip()
+    print("\nOriginal and cleaned grade values:")
+    print(
+        df_long[["D_GRADE", "D_GRADE_CLEAN"]]
+        .drop_duplicates()
+        .sort_values(by=["D_GRADE"], na_position="last")
+    )
 
-    for col in df.columns:
-        if df[col].dtype == "object":
-            df[col] = df[col].apply(sanitize_value)
+    missing_grade_mask = df_long["D_GRADE_CLEAN"].isna()
+    df_long = append_flag_reason(
+        df=df_long,
+        mask=missing_grade_mask,
+        reason="missing_grade",
+    )
+else:
+    missing_grade_mask = pd.Series(False, index=df_long.index, dtype=bool)
+    print("D_GRADE was not found. Grade cleaning was skipped.")
 
-    return df
+# Integer cleaning. Do not convert date clean fields to Int64.
+df_long = add_clean_int_columns(
+    df_long,
+    columns=[
+        "D_LOCAL_STID",
+        "D_STATE_STID",
+        "D_AGENCYCODE",
+        "D_SS",
+    ],
+)
+
+# non-numeric_ss is calculated only on the final retained df_long.
+if {"D_SS", "D_SS_CLEAN"}.issubset(df_long.columns):
+    non_numeric_ss_mask = (
+        df_long["D_SS"].apply(lambda value: not is_invalid_score_value(value))
+        & df_long["D_SS_CLEAN"].isna()
+    )
+    df_long = append_flag_reason(
+        df=df_long,
+        mask=non_numeric_ss_mask,
+        reason="non-numeric_ss",
+    )
+else:
+    non_numeric_ss_mask = pd.Series(False, index=df_long.index, dtype=bool)
+    print(
+        "D_SS or D_SS_CLEAN was not found. "
+        "The non-numeric_ss check was skipped."
+    )
+
+# Date cleaning. These remain string dates, not nullable integers.
+df_long = add_clean_date_columns(
+    df_long,
+    date_columns=["D_TESTDATE", "D_DOB"],
+)
+
+df_long = place_all_clean_columns_next_to_originals(df_long)
+
+# Move FLAG_REASON to the first column after all flags are finalized.
+if "FLAG_REASON" in df_long.columns:
+    flag_reason = df_long.pop("FLAG_REASON")
+    df_long.insert(0, "FLAG_REASON", flag_reason)
 
 
-settings_prefixed = sanitize_object_columns(settings_prefixed)
-merged_invalid = sanitize_object_columns(merged_invalid)
-flagged_for_removal = sanitize_object_columns(flagged_for_removal)
+# =========================================================
+# FINAL COLUMN CLEANUP
+# =========================================================
+
+for dataframe_name in ["df_wide", "df_long", "removed_records"]:
+    dataframe = globals()[dataframe_name]
+    dataframe = drop_legacy_and_unwanted_columns(dataframe)
+    dataframe = drop_unwanted_duplicate_columns(dataframe)
+    globals()[dataframe_name] = dataframe
+
+# The internal duplicate marker is not saved in df_wide.
+df_wide = df_wide.drop(columns=["EXACT_DUPLICATE"], errors="ignore")
+
+
+# =========================================================
+# OUTPUT VALIDATION
+# =========================================================
+
+for dataframe_name, dataframe in [
+    ("df_wide", df_wide),
+    ("df_long", df_long),
+    ("removed_records", removed_records),
+]:
+    unexpected_columns = [
+        column
+        for column in dataframe.columns
+        if str(column).strip().upper() in {
+            "AGENCYCODE.1",
+            "D_AGENCYCODE.1",
+        }
+    ]
+    if unexpected_columns:
+        raise ValueError(
+            f"{dataframe_name} still contains unwanted columns: "
+            f"{unexpected_columns}"
+        )
+
+if "FLAG_REASON" not in df_long.columns:
+    raise ValueError("FLAG_REASON is missing from df_long.")
+
+# Validate non-numeric_ss placement and definition.
+non_numeric_ss_flag_mask = (
+    df_long["FLAG_REASON"]
+    .astype("string")
+    .fillna("")
+    .str.split("|", regex=False)
+    .apply(lambda reasons: "non-numeric_ss" in reasons)
+)
+
+invalid_non_numeric_ss_flag = (
+    non_numeric_ss_flag_mask
+    & (
+        df_long["D_SS_CLEAN"].notna()
+        | df_long["D_SS"].apply(is_invalid_score_value)
+    )
+) if {"D_SS", "D_SS_CLEAN"}.issubset(df_long.columns) else pd.Series(
+    False,
+    index=df_long.index,
+    dtype=bool,
+)
+
+if invalid_non_numeric_ss_flag.any():
+    raise ValueError(
+        "One or more non-numeric_ss flags were applied incorrectly."
+    )
+
+
+# =========================================================
+# SANITIZE PARQUET OUTPUTS
+# =========================================================
+
+df_wide = sanitize_object_columns(df_wide)
 df_long = sanitize_object_columns(df_long)
+removed_records = sanitize_object_columns(removed_records)
 
 
-#==============================================================
+# =========================================================
+# QA SUMMARY
+# =========================================================
+
+print("\n" + "=" * 60)
+print("PIVOT, FLAG, AND REMOVAL SUMMARY")
+print("=" * 60)
+print(
+    "Long records marked exact duplicate: "
+    f"{int(exact_duplicate_mask.sum()):,}"
+)
+print(
+    "All-invalid score records excluded: "
+    f"{int(all_scores_invalid_mask.sum()):,}"
+)
+print(
+    "Retained records flagged invalid_score: "
+    f"{int(invalid_score_flag_mask.sum()):,}"
+)
+print(
+    "Retained records flagged missing_grade: "
+    f"{int(missing_grade_mask.sum()):,}"
+)
+print(
+    "Retained records flagged non-numeric_ss: "
+    f"{int(non_numeric_ss_flag_mask.sum()):,}"
+)
+print(
+    "Records written to removed_records: "
+    f"{len(removed_records):,}"
+)
+print(
+    "Total long records retained: "
+    f"{len(df_long):,}"
+)
+
+if "FLAG_REASON" in df_long.columns:
+    print("\nRetained-record FLAG_REASON combinations:")
+    print(df_long["FLAG_REASON"].value_counts(dropna=False))
+
+if not removed_records.empty and "REMOVAL_REASON" in removed_records.columns:
+    print("\nRemoval reason counts:")
+    print(removed_records["REMOVAL_REASON"].value_counts(dropna=False))
+
+
+# =========================================================
 # SAVE OUTPUT
-#  df_long -- long file with settings added.  reduced to 
-#             valid grades.         
-#  merged_valid -- df_long with Settings_XL fields
-#==============================================================
+# =========================================================
 
 df_wide.to_parquet(
-    DATA_ROOT / "df_wide.parquet", 
-    index=False
-    )
+    DATA_ROOT / "df_wide.parquet",
+    index=False,
+)
 
 df_long.to_parquet(
     DATA_ROOT / "df_long.parquet",
-    index=False
+    index=False,
 )
 
- 
-# df_long_with_settings.to_parquet(
-#     DATA_ROOT / "df_long_with_settings.parquet",
-#     index=False
-# )
-
-settings_prefixed.to_parquet(
-    DATA_ROOT / "settings_prefixed.parquet",
-    index=False
+removed_records.to_parquet(
+    DATA_ROOT / "removed_records.parquet",
+    index=False,
 )
 
-# merged_invalid.to_parquet(
-#     DATA_ROOT / "merged_invalid.parquet",
-#     index=False
-# )
-
-flagged_for_removal.to_parquet(
-    DATA_ROOT / "flagged_for_removal.parquet",
-    index=False
-)
-
+print("\nOutput files written:")
+print(DATA_ROOT / "df_wide.parquet")
+print(DATA_ROOT / "df_long.parquet")
+print(DATA_ROOT / "removed_records.parquet")

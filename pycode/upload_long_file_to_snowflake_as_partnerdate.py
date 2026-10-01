@@ -35,7 +35,7 @@ from pycode.settings import *
 #---------------------------------------------------------------
 
 # IMPORT DF_LONG IF NOT ALREADY LOADED
-if "df_long_with_settings" in globals() and isinstance(df_long_with_settings, pd.DataFrame):
+if "df_long" in globals() and isinstance(df_long, pd.DataFrame):
     pass
 else:
     df_long_with_settings = pd.read_parquet(Path(DATA_ROOT) / "df_long.parquet")
