@@ -35,22 +35,26 @@ STUDY_TYPE = 'EOG'
 #--------------------------------------------------------
 # TODO: get corrected settings names earlier in process
 # UPLOAD EDITED SETTINGS-- REPLACE CUTS_SUBJECT
+
+#  THIS RUN ADJUSTING SETTINGS IN CUTS/DEMO IN S DRIVE.
+
+  
 #--------------------------------------------------------
 # # IMPORT DF_LONG IF NOT ALREADY LOADED
     
-CONN = establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
+# CONN = establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
   
-success, nchunks, nrows, _ = write_pandas(
-    CONN,
-    settings_xl,
-    table_name= settings_table_name,
-    quote_identifiers=True,
-    overwrite=True, #if False appends data
-    auto_create_table=True
-)
+# success, nchunks, nrows, _ = write_pandas(
+#     CONN,
+#     settings_xl,
+#     table_name= settings_table_name,
+#     quote_identifiers=True,
+#     overwrite=True, #if False appends data
+#     auto_create_table=True
+# )
 
-CONN.commit()
-CONN.close()
+# CONN.commit()
+# CONN.close()
 
 
 
@@ -67,6 +71,8 @@ DATA_ROOT = os.path.join(SDRIVE, STUDY_YEAR, STATE_ABR)
 #------------------------------------------------------------------------------
 # CUTS / DEMOGRAPHICS FILE-- STANDARD NAME
 #------------------------------------------------------------------------------
+
+# STANDARD
 CUTS_FILE = f"{STATE_ABR}_Cuts_Demographics_{STUDY_TYPE}.xlsx"
 
 CUTS_DEMO_FILE = CUTS_DEMO_FILES / CUTS_FILE
@@ -77,6 +83,21 @@ if not CUTS_DEMO_FILE.exists():
     raise FileNotFoundError(
         f"Cuts file not found:\n{CUTS_DEMO_FILE}"
     )
+    
+
+
+#------------------------------------------------------------------------------
+# CUTS / DEMOGRAPHICS FILE-- NON-STANDARD
+#------------------------------------------------------------------------------
+    
+CUTS_FILE = 'TX_Cuts_Demographics_EOG_cw.xlsx'
+
+CUTS_DEMO_FILE = os.path.join(
+    DATA_ROOT,
+    'cuts_demo_files',
+    CUTS_FILE
+)
+# ----------------------------------------------    
 
 
 
@@ -130,6 +151,7 @@ select
     d_pldesc,
     d_ss,
     d_subject,
+    m_measurement_scale_bid,
     m_grade_ordinal,
     m_test_name,
     settings_study_type
@@ -222,47 +244,287 @@ cuts_df = cuts_df.rename(
 # WILL NOT USE GRADE IN MERGE CONDITIONS
 #------------------------------------------  
 
+#prep strings for merge
+studysample_df['D_SUBJECT'] = studysample_df['D_SUBJECT'].astype(str).str.strip().str.upper()
+cuts_df['CUTS_D_SUBJECT'] = cuts_df['CUTS_D_SUBJECT'].astype(str).str.strip().str.upper()
 
+
+# if STUDY_TYPE in ['EOG', 'SP']:
+
+#     merged = pd.merge(
+#         studysample_df,
+#         cuts_df,
+#         how='inner',
+#         left_on=[
+#             'D_SUBJECT',
+#             'D_GRADE_CLEAN',
+#             'M_MEASUREMENT_SCALE_BID'
+#         ],
+#         right_on=[
+#             'CUTS_D_SUBJECT',
+#             'CUTS_GRADE',
+#             'CUTS_SUBJECT'
+#         ]
+#     )
+
+# else:
+
+#     merged = pd.merge(
+#         studysample_df,
+#         cuts_df,
+#         how='inner',
+#         left_on=[
+#             'D_SUBJECT',
+#             'M_MEASUREMENT_SCALE_BID'
+#         ],
+#         right_on=[
+#             'CUTS_D_SUBJECT',
+#             'CUTS_SUBJECT'
+#         ]
+#     )
+
+
+# # ------------------------------------------------------------
+# # Flag scale scores outside the LOSS/HOSS range
+# # ------------------------------------------------------------
+# merged['FLAG_LOSS_HOSS'] = np.where(
+#     merged['D_SS'].lt(merged['CUTS_LOSS'])
+#     | merged['D_SS'].gt(merged['CUTS_HOSS']),
+#     1,
+#     0
+# )
+
+
+# # Optional QA dataframe containing the LOSS/HOSS violations
+# qa_loss_hoss_flagged = merged.loc[
+#     merged['FLAG_LOSS_HOSS'].eq(1)
+# ].copy()
+
+
+
+
+# # ------------------------------------------------------------
+# # Apply the CUTS_MIN/CUTS_MAX qualification
+# # ------------------------------------------------------------
+# merged = merged.loc[
+#     merged['D_SS'].between(
+#         merged['CUTS_MIN'],
+#         merged['CUTS_MAX'],
+#         inclusive='both'
+#     )
+# ].copy()
+
+
+
+
+
+# ------------------------------------------------------------
+# Add a temporary unique identifier to each study-sample row.
+# This lets us determine whether each original row ultimately
+# matches exactly one cuts record.
+# ------------------------------------------------------------
+studysample_for_merge = (
+    studysample_df
+    .reset_index(drop=True)
+    .copy()
+)
+
+studysample_for_merge['_STUDY_ROW_ID'] = studysample_for_merge.index
+
+
+# ------------------------------------------------------------
+# Merge the study sample with all potentially applicable cuts.
+# Use a left merge so unmatched study-sample rows are retained
+# long enough to be written to the QA file.
+# ------------------------------------------------------------
 if STUDY_TYPE in ['EOG', 'SP']:
 
-    merged = pd.merge(
-        studysample_df,
+    cuts_merge = pd.merge(
+        studysample_for_merge,
         cuts_df,
-        how='inner',
+        how='left',
         left_on=[
             'D_SUBJECT',
             'D_GRADE_CLEAN',
-            'M_GRADE_ORDINAL'
+            'M_MEASUREMENT_SCALE_BID'
         ],
         right_on=[
             'CUTS_D_SUBJECT',
             'CUTS_GRADE',
             'CUTS_SUBJECT'
-        ]
+        ],
+        indicator=True
     )
 
 else:
 
-    merged = pd.merge(
-        studysample_df,
+    cuts_merge = pd.merge(
+        studysample_for_merge,
         cuts_df,
-        how='inner',
+        how='left',
         left_on=[
             'D_SUBJECT',
-            'M_GRADE_ORDINAL'
+            'M_MEASUREMENT_SCALE_BID'
         ],
         right_on=[
             'CUTS_D_SUBJECT',
             'CUTS_SUBJECT'
-        ]
+        ],
+        indicator=True
     )
 
 
-merged = merged.loc[
-    (merged['CUTS_MIN'] <= merged['D_SS'])
-    &
-    (merged['CUTS_MAX'] >= merged['D_SS'])
+# ------------------------------------------------------------
+# Create SS_ADJ.
+#
+# D_SS below LOSS  -> SS_ADJ = LOSS
+# D_SS above HOSS  -> SS_ADJ = HOSS
+# Otherwise         -> SS_ADJ = D_SS
+# ------------------------------------------------------------
+cuts_merge['SS_ADJ'] = cuts_merge['D_SS'].clip(
+    lower=cuts_merge['CUTS_LOSS'],
+    upper=cuts_merge['CUTS_HOSS']
+)
+
+
+# ------------------------------------------------------------
+# Identify cuts rows for which the adjusted score falls within
+# the inclusive CUTS_MIN/CUTS_MAX range.
+# ------------------------------------------------------------
+cuts_merge['_QUALIFIES_FOR_CUT'] = (
+    cuts_merge['_merge'].eq('both')
+    & cuts_merge['SS_ADJ'].notna()
+    & cuts_merge['SS_ADJ'].between(
+        cuts_merge['CUTS_MIN'],
+        cuts_merge['CUTS_MAX'],
+        inclusive='both'
+    )
+)
+
+
+# ------------------------------------------------------------
+# Count the number of qualifying cuts rows for each original
+# study-sample row.
+# ------------------------------------------------------------
+qualifying_counts = (
+    cuts_merge.loc[cuts_merge['_QUALIFIES_FOR_CUT']]
+    .groupby('_STUDY_ROW_ID')
+    .size()
+    .rename('CUTS_MATCH_COUNT')
+)
+
+
+studysample_for_merge = studysample_for_merge.merge(
+    qualifying_counts,
+    how='left',
+    left_on='_STUDY_ROW_ID',
+    right_index=True
+)
+
+studysample_for_merge['CUTS_MATCH_COUNT'] = (
+    studysample_for_merge['CUTS_MATCH_COUNT']
+    .fillna(0)
+    .astype(int)
+)
+
+
+# ------------------------------------------------------------
+# Create QA output for original study-sample rows that did not
+# qualify against exactly one cuts record.
+# ------------------------------------------------------------
+qa_dropped_from_cuts = studysample_for_merge.loc[
+    studysample_for_merge['CUTS_MATCH_COUNT'].ne(1)
+].copy()
+
+
+# Explain why each record was dropped
+qa_dropped_from_cuts['CUTS_DROP_REASON'] = 'Did not qualify for a cuts range'
+
+qa_dropped_from_cuts.loc[
+    qa_dropped_from_cuts['CUTS_MATCH_COUNT'].eq(0),
+    'CUTS_DROP_REASON'
+] = 'No qualifying cuts record'
+
+qa_dropped_from_cuts.loc[
+    qa_dropped_from_cuts['CUTS_MATCH_COUNT'].gt(1),
+    'CUTS_DROP_REASON'
+] = 'Matched more than one cuts record'
+
+
+
+
+# ------------------------------------------------------------
+# Keep only the cuts rows that:
+#   1. Qualify using SS_ADJ, and
+#   2. Belong to a study row with exactly one qualifying cut.
+# ------------------------------------------------------------
+valid_study_row_ids = studysample_for_merge.loc[
+    studysample_for_merge['CUTS_MATCH_COUNT'].eq(1),
+    '_STUDY_ROW_ID'
 ]
+
+merged = cuts_merge.loc[
+    cuts_merge['_QUALIFIES_FOR_CUT']
+    & cuts_merge['_STUDY_ROW_ID'].isin(valid_study_row_ids)
+].copy()
+
+
+# ------------------------------------------------------------
+# Write QA file and issue console warning when records dropped.
+# ------------------------------------------------------------
+
+QA_DROPPED_FROM_CUTS_FILE = os.path.join(
+    DATA_ROOT,
+    'qa_dropped_from_cuts.xlsx'
+)
+
+if not qa_dropped_from_cuts.empty:
+    
+    qa_dropped_from_cuts = qa_dropped_from_cuts.sort_values(
+    ['D_SUBJECT', 'D_GRADE_CLEAN']
+    ).reset_index(drop=True)
+
+    qa_dropped_from_cuts.to_excel(
+        QA_DROPPED_FROM_CUTS_FILE,
+        index=False
+    )
+
+    warning_message = (
+        f"WARNING: {len(qa_dropped_from_cuts):,} study-sample "
+        f"record(s) were dropped during the merge to cut scores. "
+        f"QA file written to: {QA_DROPPED_FROM_CUTS_FILE}"
+    )
+
+    print("\n" + "=" * 80)
+    print("WARNING")
+    print(warning_message)
+    print("=" * 80 + "\n")
+
+else:
+
+    print(
+        "All study-sample records matched exactly one qualifying "
+        "cut-score record."
+    )
+
+
+# ------------------------------------------------------------
+# Remove temporary QA/helper fields from final merged dataframe.
+# SS_ADJ is intentionally retained.
+# ------------------------------------------------------------
+merged = merged.drop(
+    columns=[
+        '_STUDY_ROW_ID',
+        '_merge',
+        '_QUALIFIES_FOR_CUT'
+    ],
+    errors='ignore'
+).reset_index(drop=True)
+
+
+print(f"final merged records: {len(merged):,}")
+print(f"Dropped study-sample records: {len(qa_dropped_from_cuts):,}")
+
 
 
 #------------------------------------------------------------------------------
