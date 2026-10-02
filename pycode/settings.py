@@ -124,21 +124,6 @@ SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 # DATA_YEAR = TERM_NUMBER[:4] 
 
 
-#------ NEBRASKA -------
-# TERM_NUMBER = '202602'      # TERM OF DATA
-# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
-# STATE_NAME = 'NEBRASKA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
-# STATE_ABR = 'NE'
-# DATA_YEAR = TERM_NUMBER[:4] 
-# map_subject_codes = [1,2,4]
-# map_test_names = ['Growth: Math 2-5 NE 2022 1.1',
-# 'Growth: Math 6+ NE 2022 1.1',
-# 'Growth: Reading 2-5 NE 2021 1.1',
-# 'Growth: Reading 6+ NE 2021 1.1',
-# 'Growth: Science 6-8 NE 2024 1.1',
-# 'Growth: Science 2-5 NE 2024 1.1'
-# ]
-
 #------ INDIANA -------
 # TERM_NUMBER = '202602'      # TERM OF DATA
 # STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
@@ -168,6 +153,7 @@ combined_file_table_name = ( f"{STATE_ABR}{STUDY_YEAR}_COMBINED_FILE").upper()
 combined_file_stage_table_name = (f"{combined_file_table_name}_STAGE")
 
 
+
 # PRINT THE DATA ROOT
 print("DATA_ROOT =", DATA_ROOT)
 
@@ -180,16 +166,50 @@ ORIGINAL_FILES = DATA_ROOT / "original_files"
 # REJECTED_FILES = DATA_ROOT / "rejected_files"
 # EDITED_FILES = DATA_ROOT  / "edited_files"
 WORKING_FILES = DATA_ROOT / "working_files"
+CUTS_DEMO_FILES = DATA_ROOT / "cuts_demo_files"
 
 
 # 9/10/26 changing file parsing behavior to reduce folders 
 # for folder in [ORIGINAL_FILES, REJECTED_FILES, EDITED_FILES, WORKING_FILES]:
-for folder in [ORIGINAL_FILES, WORKING_FILES]:
+for folder in [ORIGINAL_FILES, WORKING_FILES, CUTS_DEMO_FILES]:
     folder.mkdir(parents=True, exist_ok=True)
 
 
 #full output path + filename
 OUTMAPCOUNTS = os.path.join(DATA_ROOT , STATE_ABR + DATA_YEAR +'_mapcounts.xlsx' )
+
+#------------------------------------------------------------------------------
+#  ADDITIONAL SETTINGS
+#------------------------------------------------------------------------------
+
+
+#------------------------------------------------------------------------------
+# SHAREPOINT ROOT
+# ROOT IS ALREADY AT:
+# ...\Projects\<STATE_CAMEL>\<STUDY_YEAR>
+# I forgot-- this is buggy.  working in s: DATA_FILES INSTEAD
+#------------------------------------------------------------------------------
+
+# SHAREPOINT_ROOT = os.path.join(
+#     r'C:\Users\WellsC\OneDrive - HMHCO\Linking Studies - Documents\Projects',
+#     STATE_CAMEL,
+#     STUDY_YEAR
+# )
+
+# #------------------------------------------------------------------------------
+# # SHAREPOINT PSYCH PATH
+# #------------------------------------------------------------------------------
+
+# SHAREPOINT_PSYCH_PATH = os.path.join(
+#     SHAREPOINT_ROOT,
+#     'Psychometrics',
+#     STUDY_TYPE,
+#     'Input'
+# )
+
+
+
+
 
 #------------------------------------------------------------------
 # OUTPUT-- 
