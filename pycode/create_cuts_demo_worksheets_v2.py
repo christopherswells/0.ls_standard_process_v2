@@ -394,11 +394,18 @@ QA_DROPPED_FROM_CUTS_FILE = os.path.join(
     'qa_dropped_from_cuts.xlsx'
 )
 
+
+
+
 if not qa_dropped_from_cuts.empty:
-    
+
     qa_dropped_from_cuts = qa_dropped_from_cuts.sort_values(
-    ['D_SUBJECT', 'D_GRADE_CLEAN']
+        ['D_SUBJECT', 'D_GRADE_CLEAN']
     ).reset_index(drop=True)
+
+    # Remove timezone information from any datetime columns
+    for col in qa_dropped_from_cuts.select_dtypes(include=['datetimetz']).columns:
+        qa_dropped_from_cuts[col] = qa_dropped_from_cuts[col].dt.tz_localize(None)
 
     qa_dropped_from_cuts.to_excel(
         QA_DROPPED_FROM_CUTS_FILE,
@@ -486,71 +493,20 @@ pre_worksheet_scores = merged[['M_TEST_EVENT_BUSINESS_IDENTIFIER',
 studysample_withcuts = merged.copy()
 
 
-#------------------------------------------------------------------------------
-# ENSURE SS_ADJ EXISTS
-#
-# SS_ADJ should already have been created during the cuts merge:
-#   D_SS below LOSS -> LOSS
-#   D_SS above HOSS -> HOSS
-#   Otherwise       -> D_SS
-#
-# This fallback only applies if SS_ADJ does not already exist.
-#------------------------------------------------------------------------------
 
-# if 'SS_ADJ' not in studysample_withcuts.columns:
-#     studysample_withcuts['SS_ADJ'] = studysample_withcuts['D_SS']
+#QA Counts
+merged[['M_STUDENT_GENDER',	'D_SEX']].value_counts()
 
+studysample_withcuts[['M_STUDENT_GENDER',	'D_SEX']].value_counts()
 
-# #------------------------------------------------------------------------------
-# # ADD EOC GRADE FOR HIGH SCHOOL STUDIES
-# #------------------------------------------------------------------------------
-
-# if STUDY_TYPE == 'HS':
-#     studysample_withcuts['EOC_GRADE'] = 14
-
-
-#------------------------------------------------------------------------------
-# VERIFY THAT PL_CODE AND PL_DESC EXIST
-#
-# These should already have been populated from:
-#   CUTS_PROFICIENCY_LEVEL
-#   CUTS_PROFICIENCY_NAME
-#------------------------------------------------------------------------------
-
-# required_pl_columns = [
-#     'CUTS_PROFICIENCY_LEVEL',
-#     'CUTS_PROFICIENCY_NAME'
-# ]
-
-# missing_pl_columns = [
-#     column
-#     for column in required_pl_columns
-#     if column not in studysample_withcuts.columns
-# ]
-
-# if missing_pl_columns:
-#     raise KeyError(
-#         "The merged dataframe is missing required proficiency columns:\n"
-#         f"{missing_pl_columns}\n\n"
-#         "Available columns:\n"
-#         f"{studysample_withcuts.columns.tolist()}"
-#     )
-
-
-# # Populate the final PL fields from the cuts merge.
-# # Existing values are overwritten so they remain consistent with the cuts.
-
-# studysample_withcuts['PL_CODE'] = (
-#     studysample_withcuts['CUTS_PROFICIENCY_LEVEL']
-# )
-
-# studysample_withcuts['PL_DESC'] = (
-#     studysample_withcuts['CUTS_PROFICIENCY_NAME']
-# )
 
 
 #------------------------------------------------------------------------------
 # RACE REVIEW
+#------------------------------------------------------------------------------
+#
+# Create unique review patterns and assign a review marker.
+# The marker is then merged back to ALL matching study-sample rows.
 #------------------------------------------------------------------------------
 
 race = (
@@ -574,11 +530,62 @@ race = (
     .reset_index(drop=True)
 )
 
+#-------------------------------------------------------------
+# Create review marker
+#-------------------------------------------------------------
 
+race['RACE_REVIEW_MARKER'] = (
+    'R'
+    + (race.index + 1).astype(str)
+)
+
+#-------------------------------------------------------------
 # Final race fields to be manually populated during review
+#-------------------------------------------------------------
 
 race['RACE'] = ''
 race['RACE_DESC'] = ''
+
+
+
+#-------------------------------------------------------------
+# Put marker first in worksheet
+#-------------------------------------------------------------
+
+race = race[
+    [
+        'RACE_REVIEW_MARKER',
+        'M_NWEA_ETHNIC_GROUP_NAME',
+        'D_ETHNICITY',
+        'D_RACE',
+        'count',
+        'RACE',
+        'RACE_DESC'
+    ]
+]
+
+#-------------------------------------------------------------
+# Merge marker back to ALL matching study sample rows
+#-------------------------------------------------------------
+
+studysample_withcuts = studysample_withcuts.merge(
+    race[
+        [
+            'RACE_REVIEW_MARKER',
+            'M_NWEA_ETHNIC_GROUP_NAME',
+            'D_ETHNICITY',
+            'D_RACE'
+        ]
+    ],
+    on=[
+        'M_NWEA_ETHNIC_GROUP_NAME',
+        'D_ETHNICITY',
+        'D_RACE'
+    ],
+    how='left'
+)
+
+
 
 
 #------------------------------------------------------------------------------
@@ -587,42 +594,42 @@ race['RACE_DESC'] = ''
 # Includes the incoming district PL field when it is available.
 #------------------------------------------------------------------------------
 
-pl_columns = [
-    'D_SUBJECT',
-    'D_GRADE_CLEAN',
-    'CUTS_PROFICIENCY_LEVEL',
-    'CUTS_PROFICIENCY_NAME',
-    'PL_CODE',
-    'PL_DESC'
-]
+# pl_columns = [
+#     'D_SUBJECT',
+#     'D_GRADE_CLEAN',
+#     'CUTS_PROFICIENCY_LEVEL',
+#     'CUTS_PROFICIENCY_NAME',
+#     'PL_CODE',
+#     'PL_DESC'
+# ]
 
 
-# Include these optional source columns when present
+# # Include these optional source columns when present
 
-optional_pl_columns = [
-    'M_SUBJECT',
-    'D_PL'
-]
+# optional_pl_columns = [
+#     'M_SUBJECT',
+#     'D_PL'
+# ]
 
-for column in optional_pl_columns:
-    if column in studysample_withcuts.columns:
-        pl_columns.insert(2, column)
+# for column in optional_pl_columns:
+#     if column in studysample_withcuts.columns:
+#         pl_columns.insert(2, column)
 
 
-pl = (
-    studysample_withcuts[pl_columns]
-    .value_counts(dropna=False)
-    .reset_index(name='count')
-    .sort_values(
-        [
-            'D_SUBJECT',
-            'D_GRADE_CLEAN',
-            'PL_CODE'
-        ],
-        na_position='last'
-    )
-    .reset_index(drop=True)
-)
+# pl = (
+#     studysample_withcuts[pl_columns]
+#     .value_counts(dropna=False)
+#     .reset_index(name='count')
+#     .sort_values(
+#         [
+#             'D_SUBJECT',
+#             'D_GRADE_CLEAN',
+#             'PL_CODE'
+#         ],
+#         na_position='last'
+#     )
+#     .reset_index(drop=True)
+# )
 
 
 #------------------------------------------------------------------------------
@@ -641,9 +648,9 @@ pl_district_columns = [
 ]
 
 
-for column in optional_pl_columns:
-    if column in studysample_withcuts.columns:
-        pl_district_columns.insert(3, column)
+# for column in optional_pl_columns:
+#     if column in studysample_withcuts.columns:
+#         pl_district_columns.insert(3, column)
 
 
 pl_district = (
@@ -669,21 +676,23 @@ pl_district = (
 # PL CODE REVIEW
 #
 # Compare district PL to cuts-derived PL.
+# Create a review marker that can be merged back later.
 #------------------------------------------------------------------------------
+
 
 pl_code = (
     studysample_withcuts[
         [
             'D_SUBJECT',
-            'D_GRADE_CLEAN',            
+            'D_GRADE_CLEAN',
             'D_PLCODE',
-            'D_PLDESC',           
+            'D_PLDESC',
             'PL_CODE',
             'PL_DESC'
         ]
     ]
     .value_counts(dropna=False)
-    .reset_index(name='count')
+    .reset_index(name='COUNT')
     .sort_values(
         [
             'D_SUBJECT',
@@ -696,6 +705,58 @@ pl_code = (
     )
     .reset_index(drop=True)
 )
+
+# Unique marker for each complete PL pattern
+pl_code['PL_REVIEW_MARKER'] = (
+    'P'
+    + (pl_code.index + 1).astype(str)
+)
+
+# Put marker first and count last
+pl_code = pl_code[
+    [
+        'PL_REVIEW_MARKER',
+        'D_SUBJECT',
+        'D_GRADE_CLEAN',
+        'D_PLCODE',
+        'D_PLDESC',
+        'PL_CODE',
+        'PL_DESC',
+        'COUNT'
+    ]
+]
+
+# reviewer edits THESE fields
+# pl_code['REVIEWED_PL_CODE'] = pl_code['PL_CODE']
+# pl_code['REVIEWED_PL_DESC'] = pl_code['PL_DESC']
+
+
+
+#-------------------------------------------------------------
+# Merge PL review marker back to study sample
+#-------------------------------------------------------------
+
+studysample_withcuts = studysample_withcuts.merge(
+    pl_code[
+        [
+            'D_SUBJECT',
+            'D_GRADE_CLEAN',
+            'D_PLCODE',
+            'D_PLDESC',
+            'PL_REVIEW_MARKER'
+        ]
+    ],
+    on=[
+        'D_SUBJECT',
+        'D_GRADE_CLEAN',
+        'D_PLCODE',
+        'D_PLDESC'
+    ],
+    how='left'
+)
+
+
+
 
 
 #------------------------------------------------------------------------------
@@ -716,7 +777,6 @@ else:
         "Neither M_STUDENT_GENDER nor M_SEX was found in the merged dataframe."
     )
 
-
 sex = (
     studysample_withcuts[
         [
@@ -736,11 +796,53 @@ sex = (
     .reset_index(drop=True)
 )
 
+#-------------------------------------------------------------
+# Create review marker
+#-------------------------------------------------------------
 
+sex['SEX_REVIEW_MARKER'] = (
+    'S'
+    + (sex.index + 1).astype(str)
+)
+
+#-------------------------------------------------------------
 # Final sex field to be manually populated during review
+#-------------------------------------------------------------
 
 sex['SEX'] = ''
 
+#-------------------------------------------------------------
+# Put marker first in worksheet
+#-------------------------------------------------------------
+
+sex = sex[
+    [
+        'SEX_REVIEW_MARKER',
+        nwea_sex_column,
+        'D_SEX',
+        'count',
+        'SEX'
+    ]
+]
+
+#-------------------------------------------------------------
+# Merge marker back to ALL matching study sample rows
+#-------------------------------------------------------------
+
+studysample_withcuts = studysample_withcuts.merge(
+    sex[
+        [
+            'SEX_REVIEW_MARKER',
+            nwea_sex_column,
+            'D_SEX'
+        ]
+    ],
+    on=[
+        nwea_sex_column,
+        'D_SEX'
+    ],
+    how='left'
+)
 
 #==============================================================================
 # OUTPUT REVIEW WORKBOOK
@@ -872,76 +974,395 @@ sex_worksheet = pd.read_excel(
 
 
 
-CONN = establish_snowflake_connector(
-    SNOWFLAKEUSER,
-    ROLE,
-    WAREHOUSE,
-    DATABASE=DATABASE,
-    SCHEMA=SCHEMA
+# CONN = establish_snowflake_connector(
+#     SNOWFLAKEUSER,
+#     ROLE,
+#     WAREHOUSE,
+#     DATABASE=DATABASE,
+#     SCHEMA=SCHEMA
+# )
+
+
+# #----------------------------------------------------------
+# #  pre_worksheet_scores
+# #----------------------------------------------------------
+# success, nchunks, nrows, _ = write_pandas(
+#     CONN,
+#     pre_worksheet_scores,
+#     table_name=pre_worksheet_scores_table_name,
+#     quote_identifiers=False,
+#     overwrite=True,
+#     auto_create_table=True
+# )
+
+# print(f"{pre_worksheet_scores}: {nrows:,} rows")
+
+
+# #----------------------------------------------------------
+# # SEX
+# #----------------------------------------------------------
+# success, nchunks, nrows, _ = write_pandas(
+#     CONN,
+#     sex_worksheet,
+#     table_name=sex_table_name,
+#     quote_identifiers=False,
+#     overwrite=True,
+#     auto_create_table=True
+# )
+
+# print(f"{sex_table_name}: {nrows:,} rows")
+
+
+# #----------------------------------------------------------
+# # PL
+# #----------------------------------------------------------
+# success, nchunks, nrows, _ = write_pandas(
+#     CONN,
+#     pl_worksheet,
+#     table_name=pl_table_name,
+#     quote_identifiers=False,
+#     overwrite=True,
+#     auto_create_table=True
+# )
+
+# print(f"{pl_table_name}: {nrows:,} rows")
+
+
+# #----------------------------------------------------------
+# # RACE
+# #----------------------------------------------------------
+# success, nchunks, nrows, _ = write_pandas(
+#     CONN,
+#     race_worksheet,
+#     table_name=race_table_name,
+#     quote_identifiers=False,
+    
+#     overwrite=True,
+#     auto_create_table=True
+# )
+
+# print(f"{race_table_name}: {nrows:,} rows")
+
+
+# CONN.commit()
+# CONN.close()
+
+# print("Worksheet uploads complete.")
+
+
+
+
+
+
+#==============================================================================
+# UPDATING STUDYSAMPE_WITHCUTS HERE
+#==============================================================================
+
+
+#=========================================================
+# MERGE SEX AND RACE WORKSHEETS
+# Handles NULL values in merge keys
+#=========================================================
+
+#=========================================================
+# SEX LOOKUP
+#=========================================================
+
+sex_keys = [
+    'M_STUDENT_GENDER',
+    'D_SEX'
+]
+
+for col in sex_keys:
+
+    studysample_withcuts[col] = (
+        studysample_withcuts[col]
+        .astype('string')
+        .str.strip()
+        .replace('', pd.NA)
+    )
+
+    sex_worksheet[col] = (
+        sex_worksheet[col]
+        .astype('string')
+        .str.strip()
+        .replace('', pd.NA)
+    )
+
+sex_lookup = (
+    sex_worksheet
+    .drop_duplicates(subset=sex_keys)
+    .set_index(sex_keys)['SEX']
+)
+
+sex_index = (
+    studysample_withcuts
+    .set_index(sex_keys)
+    .index
+)
+
+studysample_withcuts['SEX'] = sex_index.map(sex_lookup)
+
+#========
+# QA
+#========
+studysample_withcuts[['SEX']].value_counts(dropna = False)
+
+
+
+#=========================================================
+# RACE LOOKUP
+#=========================================================
+
+race_keys = [
+    'M_NWEA_ETHNIC_GROUP_NAME',
+    'D_ETHNICITY',
+    'D_RACE'
+]
+
+for col in race_keys:
+
+    studysample_withcuts[col] = (
+        studysample_withcuts[col]
+        .astype('string')
+        .str.strip()
+        .replace('', pd.NA)
+    )
+
+    race_worksheet[col] = (
+        race_worksheet[col]
+        .astype('string')
+        .str.strip()
+        .replace('', pd.NA)
+    )
+
+# optional QA
+dupes = race_worksheet[
+    race_worksheet.duplicated(
+        subset=race_keys,
+        keep=False
+    )
+]
+
+if len(dupes) > 0:
+    print(
+        f'WARNING: {len(dupes):,} duplicate race mapping rows found'
+    )
+
+race_lookup = (
+    race_worksheet
+    .drop_duplicates(subset=race_keys)
+    .set_index(race_keys)
+)
+
+race_index = (
+    studysample_withcuts
+    .set_index(race_keys)
+    .index
+)
+
+studysample_withcuts['RACE'] = (
+    race_index.map(
+        race_lookup['RACE']
+    )
+)
+
+studysample_withcuts['RACE_DESC'] = (
+    race_index.map(
+        race_lookup['RACE_DESC']
+    )
+)
+    
+    
+#-----------------------
+# RACE QA COUNTS
+#----------------------
+studysample_withcuts[['RACE','RACE_DESC']].value_counts(dropna = False)
+
+
+# RACE MISSING -- UNIQUE COMBOS
+qa_race_missing = studysample_withcuts.loc[
+    studysample_withcuts['RACE'].isna(),
+    [
+        'M_NWEA_ETHNIC_GROUP_NAME',
+        'D_ETHNICITY',
+        'D_RACE',
+        'RACE',
+        'RACE_DESC'
+    ]
+].drop_duplicates()
+
+
+
+#=========================================================
+# PL LOOKUP
+#=========================================================
+
+pl_keys = [
+    'D_SUBJECT',
+    'D_GRADE_CLEAN',
+    'D_PLCODE',
+    'D_PLDESC'
+]
+
+# standardize keys in both dataframes
+for col in pl_keys:
+
+    studysample_withcuts[col] = (
+        studysample_withcuts[col]
+        .astype('string')
+        .str.strip()
+        .replace('', pd.NA)
+    )
+
+    pl_worksheet[col] = (
+        pl_worksheet[col]
+        .astype('string')
+        .str.strip()
+        .replace('', pd.NA)
+    )
+
+# create identical keys that allow nulls to match
+for col in pl_keys:
+
+    studysample_withcuts[col] = (
+        studysample_withcuts[col]
+        .fillna('__NULL__')
+    )
+
+    pl_worksheet[col] = (
+        pl_worksheet[col]
+        .fillna('__NULL__')
+    )
+
+studysample_withcuts['_PL_KEY'] = (
+      studysample_withcuts['D_SUBJECT']
+    + '|'
+    + studysample_withcuts['D_GRADE_CLEAN']
+    + '|'
+    + studysample_withcuts['D_PLCODE']
+    + '|'
+    + studysample_withcuts['D_PLDESC']
+)
+
+pl_worksheet['_PL_KEY'] = (
+      pl_worksheet['D_SUBJECT']
+    + '|'
+    + pl_worksheet['D_GRADE_CLEAN']
+    + '|'
+    + pl_worksheet['D_PLCODE']
+    + '|'
+    + pl_worksheet['D_PLDESC']
+)
+
+# remove duplicate lookup rows
+pl_worksheet = pl_worksheet.drop_duplicates(
+    subset=['_PL_KEY']
+)
+
+# build lookup dictionaries
+pl_code_lookup = (
+    pl_worksheet
+    .set_index('_PL_KEY')['PL_CODE']
+)
+
+pl_desc_lookup = (
+    pl_worksheet
+    .set_index('_PL_KEY')['PL_DESC']
+)
+
+# overwrite existing values
+studysample_withcuts['PL_CODE'] = (
+    studysample_withcuts['_PL_KEY']
+    .map(pl_code_lookup)
+)
+
+studysample_withcuts['PL_DESC'] = (
+    studysample_withcuts['_PL_KEY']
+    .map(pl_desc_lookup)
+)
+
+# cleanup
+studysample_withcuts.drop(
+    columns=['_PL_KEY'],
+    inplace=True
+)
+
+pl_worksheet.drop(
+    columns=['_PL_KEY'],
+    inplace=True
 )
 
 
-#----------------------------------------------------------
-#  pre_worksheet_scores
-#----------------------------------------------------------
-success, nchunks, nrows, _ = write_pandas(
-    CONN,
-    pre_worksheet_scores,
-    table_name=pre_worksheet_scores_table_name,
-    quote_identifiers=False,
-    overwrite=True,
-    auto_create_table=True
+#------------------
+# QA
+#--------------------
+qa_pl = (
+    studysample_withcuts[
+        [
+            'D_SUBJECT',
+            'D_GRADE_CLEAN',
+            'D_PLCODE',
+            'D_PLDESC',
+            'PL_CODE',
+            'PL_DESC'
+        ]
+    ]
+    .value_counts(dropna=False)
+    .reset_index(name='COUNT')
+    .sort_values(
+        ['D_SUBJECT',
+         'D_GRADE_CLEAN',
+         'D_PLCODE',
+         'D_PLDESC']
+    )
 )
 
-print(f"{pre_worksheet_scores}: {nrows:,} rows")
+print(qa_pl)
 
 
-#----------------------------------------------------------
-# SEX
-#----------------------------------------------------------
-success, nchunks, nrows, _ = write_pandas(
-    CONN,
-    sex_worksheet,
-    table_name=sex_table_name,
-    quote_identifiers=False,
-    overwrite=True,
-    auto_create_table=True
+
+
+qa = (
+    pl_worksheet[
+        [
+            'D_SUBJECT',
+            'D_GRADE_CLEAN',
+            'D_PLCODE',
+            'D_PLDESC',
+            'PL_CODE',
+            'PL_DESC'
+        ]
+    ]
 )
 
-print(f"{sex_table_name}: {nrows:,} rows")
-
-
-#----------------------------------------------------------
-# PL
-#----------------------------------------------------------
-success, nchunks, nrows, _ = write_pandas(
-    CONN,
-    pl_worksheet,
-    table_name=pl_table_name,
-    quote_identifiers=False,
-    overwrite=True,
-    auto_create_table=True
+print(
+    qa.loc[
+        qa['D_PLDESC'].str.contains(
+            'Did Not Meet',
+            na=False
+        )
+    ]
 )
 
-print(f"{pl_table_name}: {nrows:,} rows")
+qa.loc[
+    qa['D_PLDESC'].str.contains(
+        'Did Not Meet',
+        na=False
+    )
+]
 
+pl_worksheet[
+    ['D_SUBJECT',
+     'D_GRADE_CLEAN',
+     'D_PLCODE',
+     'D_PLDESC',
+     'PL_CODE',
+     'PL_DESC']
+].head(20)
 
-#----------------------------------------------------------
-# RACE
-#----------------------------------------------------------
-success, nchunks, nrows, _ = write_pandas(
-    CONN,
-    race_worksheet,
-    table_name=race_table_name,
-    quote_identifiers=False,
-    overwrite=True,
-    auto_create_table=True
-)
-
-print(f"{race_table_name}: {nrows:,} rows")
-
-
-CONN.commit()
-CONN.close()
-
-print("Worksheet uploads complete.")
+qa_pl[
+    qa_pl['D_SUBJECT'].eq('MATH')
+    &
+    qa_pl['D_GRADE_CLEAN'].eq('3')
+].head(20)
