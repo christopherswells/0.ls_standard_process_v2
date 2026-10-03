@@ -1,16 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Oct  1 14:02:27 2026
+Created on Fri Oct  2 22:31:53 2026
 
 @author: Chris.Wells
-
-upload cuts/demo file
-
-
-adjujsts PL_CODE, PL_DESC
-
-
 """
+
+
 
 from pathlib import Path
 import re
@@ -133,29 +128,7 @@ race_mapping = pd.read_excel(
 #------------------------------------------------------------------------------
 
 query = f"""
-select    
-    M_student_business_identifier, 
-    m_test_event_business_identifier,
-    m_student_gender,
-    d_sex,
-    m_nwea_ethnic_group_name,
-    d_ethnicity,
-    d_race,    
-    d_grade_clean,   
-    m_state,
-    settings_term,
-    D_plcode,
-    d_pldesc,
-    d_ss,
-    d_subject,
-    m_measurement_scale_bid,
-    m_grade_ordinal,
-    m_test_name,
-    d_testdate_clean,
-    d_testname,
-    D_DISTRICTNAME,
-    D_AGENCYCODE,
-    settings_study_type
+select *
 
 from research_prd_grd_db.linking_studies.tx2026_studysample_qa
 
