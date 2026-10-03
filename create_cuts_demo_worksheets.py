@@ -14,6 +14,7 @@ import pandas as pd
 from typing import Optional
 import sys
 import os
+from snowflake.connector.pandas_tools import write_pandas
 
 # Spyder sometimes gets screwy with the working directory
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,33 +33,6 @@ STUDY_TYPE = 'EOG'
 
 
 
-#--------------------------------------------------------
-# TODO: get corrected settings names earlier in process
-# UPLOAD EDITED SETTINGS-- REPLACE CUTS_SUBJECT
-
-#  THIS RUN ADJUSTING SETTINGS IN CUTS/DEMO IN S DRIVE.
-
-  
-#--------------------------------------------------------
-# # IMPORT DF_LONG IF NOT ALREADY LOADED
-    
-# CONN = establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
-  
-# success, nchunks, nrows, _ = write_pandas(
-#     CONN,
-#     settings_xl,
-#     table_name= settings_table_name,
-#     quote_identifiers=True,
-#     overwrite=True, #if False appends data
-#     auto_create_table=True
-# )
-
-# CONN.commit()
-# CONN.close()
-
-
-
-
 #------------------------------------------------------------------------------
 #  STANDARD PATHS AND FILES
 #------------------------------------------------------------------------------
@@ -66,6 +40,12 @@ STUDY_TYPE = 'EOG'
 # STANDARD LOCATION IN S:\\{STUDY_YEAR}\{ST}
 DATA_ROOT = os.path.join(SDRIVE, STUDY_YEAR, STATE_ABR)
 
+
+# NAME OF SNWFLAKE TABLES TO LOAD COMPLETED WORKSHEETS
+# FOR MERGING ADJUSTED FIELDS BACK TO DATA
+sex_table_name =  f"{STATE_ABR}{STUDY_YEAR}_worksheet_sex_{STUDY_TYPE}"
+pl_table_name =  f"{STATE_ABR}{STUDY_YEAR}_worksheet_pl_{STUDY_TYPE}"
+race_table_name =  f"{STATE_ABR}{STUDY_YEAR}_worksheet_race_{STUDY_TYPE}"
 
 
 #------------------------------------------------------------------------------
@@ -90,16 +70,22 @@ if not CUTS_DEMO_FILE.exists():
 # CUTS / DEMOGRAPHICS FILE-- NON-STANDARD
 #------------------------------------------------------------------------------
     
-CUTS_FILE = 'TX_Cuts_Demographics_EOG_cw.xlsx'
+CUTS_FILE = f"{STATE_ABR}_Cuts_Demographics_{STUDY_TYPE}_cw.xlsx"
 
 CUTS_DEMO_FILE = os.path.join(
     DATA_ROOT,
     'cuts_demo_files',
     CUTS_FILE
 )
-# ----------------------------------------------    
 
 
+
+#------------------------------------------------------------------------------
+# CUTS_DEMO_WORKSHEETS_FILE
+#------------------------------------------------------------------------------
+CUTS_DEMO_WORKSHEETS_FILE = CUTS_DEMO_FILES / (
+    f"{STATE_ABR}_Cuts_Demographic_Worksheets_{STUDY_TYPE}.xlsx"
+)
 
 
 #------------------------------------------------------------------------------
@@ -154,6 +140,10 @@ select
     m_measurement_scale_bid,
     m_grade_ordinal,
     m_test_name,
+    d_testdate_clean,
+    d_testname,
+    D_DISTRICTNAME,
+    D_AGENCYCODE,
     settings_study_type
 
 from research_prd_grd_db.linking_studies.tx2026_studysample_qa
@@ -164,6 +154,10 @@ where match_type <> 'UNMATCHED'
 
 order by M_student_business_identifier
 """
+
+
+
+
 
 studysample_df = query_snowflake(
     query,
@@ -247,74 +241,6 @@ cuts_df = cuts_df.rename(
 #prep strings for merge
 studysample_df['D_SUBJECT'] = studysample_df['D_SUBJECT'].astype(str).str.strip().str.upper()
 cuts_df['CUTS_D_SUBJECT'] = cuts_df['CUTS_D_SUBJECT'].astype(str).str.strip().str.upper()
-
-
-# if STUDY_TYPE in ['EOG', 'SP']:
-
-#     merged = pd.merge(
-#         studysample_df,
-#         cuts_df,
-#         how='inner',
-#         left_on=[
-#             'D_SUBJECT',
-#             'D_GRADE_CLEAN',
-#             'M_MEASUREMENT_SCALE_BID'
-#         ],
-#         right_on=[
-#             'CUTS_D_SUBJECT',
-#             'CUTS_GRADE',
-#             'CUTS_SUBJECT'
-#         ]
-#     )
-
-# else:
-
-#     merged = pd.merge(
-#         studysample_df,
-#         cuts_df,
-#         how='inner',
-#         left_on=[
-#             'D_SUBJECT',
-#             'M_MEASUREMENT_SCALE_BID'
-#         ],
-#         right_on=[
-#             'CUTS_D_SUBJECT',
-#             'CUTS_SUBJECT'
-#         ]
-#     )
-
-
-# # ------------------------------------------------------------
-# # Flag scale scores outside the LOSS/HOSS range
-# # ------------------------------------------------------------
-# merged['FLAG_LOSS_HOSS'] = np.where(
-#     merged['D_SS'].lt(merged['CUTS_LOSS'])
-#     | merged['D_SS'].gt(merged['CUTS_HOSS']),
-#     1,
-#     0
-# )
-
-
-# # Optional QA dataframe containing the LOSS/HOSS violations
-# qa_loss_hoss_flagged = merged.loc[
-#     merged['FLAG_LOSS_HOSS'].eq(1)
-# ].copy()
-
-
-
-
-# # ------------------------------------------------------------
-# # Apply the CUTS_MIN/CUTS_MAX qualification
-# # ------------------------------------------------------------
-# merged = merged.loc[
-#     merged['D_SS'].between(
-#         merged['CUTS_MIN'],
-#         merged['CUTS_MAX'],
-#         inclusive='both'
-#     )
-# ].copy()
-
-
 
 
 
@@ -526,489 +452,471 @@ print(f"final merged records: {len(merged):,}")
 print(f"Dropped study-sample records: {len(qa_dropped_from_cuts):,}")
 
 
+#-------------------------------------------------------------------------
+# Populate proficiency fields from cuts lookup
+#-------------------------------------------------------------------------
+merged['PL_CODE'] = merged['CUTS_PROFICIENCY_LEVEL']
+merged['PL_DESC'] = merged['CUTS_PROFICIENCY_NAME']
 
-#------------------------------------------------------------------------------
+
+
+
+
+#==============================================================================
+#==============================================================================
 # CREATE CUTS / DEMOGRAPHICS REVIEW WORKSHEETS
-#------------------------------------------------------------------------------
+#==============================================================================
+#==============================================================================
+
+#==============================================================================
+# PREPARE AND OUTPUT RACE / PL / SEX REVIEW WORKBOOK
+#==============================================================================
 
 
 #------------------------------------------------------------------------------
-# OUTPUT FILE
+# USE FINAL MERGED DATA
 #------------------------------------------------------------------------------
 
-CUTS_DEMO_WORKSHEETS_FILE = (
-    CUTS_DEMO_FILES / "cuts_demo_worksheets.xlsx"
-)
+studysample_withcuts = merged.copy()
 
 
 #------------------------------------------------------------------------------
-# STANDARDIZE SNOWFLAKE COLUMN NAMES
+# ENSURE SS_ADJ EXISTS
 #
-# pd.read_sql() usually returns uppercase Snowflake column names.
-# Standardizing here makes the remaining code predictable.
-#------------------------------------------------------------------------------
-
-studysample_df.columns = (
-    studysample_df.columns
-    .str.strip()
-    .str.upper()
-)
-
-
-#------------------------------------------------------------------------------
-# HELPER: FIND AN EXCEL SHEET CASE-INSENSITIVELY
-#------------------------------------------------------------------------------
-
-def get_sheet_name_case_insensitive(excel_file, target_sheet):
-    """
-    Return the workbook's actual sheet name using a case-insensitive match.
-    """
-
-    sheet_lookup = {
-        sheet_name.strip().casefold(): sheet_name
-        for sheet_name in excel_file.sheet_names
-    }
-
-    target_key = target_sheet.strip().casefold()
-
-    if target_key not in sheet_lookup:
-        raise ValueError(
-            f"Worksheet '{target_sheet}' was not found in:\n"
-            f"{excel_file.io}\n\n"
-            f"Available worksheets: {excel_file.sheet_names}"
-        )
-
-    return sheet_lookup[target_key]
-
-
-#------------------------------------------------------------------------------
-# READ CUT SCORES
+# SS_ADJ should already have been created during the cuts merge:
+#   D_SS below LOSS -> LOSS
+#   D_SS above HOSS -> HOSS
+#   Otherwise       -> D_SS
 #
-# The first three rows are descriptive rows, so the table header begins
-# on Excel row 4.
+# This fallback only applies if SS_ADJ does not already exist.
 #------------------------------------------------------------------------------
 
-cuts_excel = pd.ExcelFile(
-    CUTS_DEMO_FILE,
-    engine="openpyxl"
-)
+# if 'SS_ADJ' not in studysample_withcuts.columns:
+#     studysample_withcuts['SS_ADJ'] = studysample_withcuts['D_SS']
 
-cuts_sheet_name = get_sheet_name_case_insensitive(
-    cuts_excel,
-    "Cut_scores"
-)
 
-cuts_df = pd.read_excel(
-    cuts_excel,
-    sheet_name=cuts_sheet_name,
-    skiprows=3
-)
+# #------------------------------------------------------------------------------
+# # ADD EOC GRADE FOR HIGH SCHOOL STUDIES
+# #------------------------------------------------------------------------------
 
-cuts_df.columns = (
-    cuts_df.columns
-    .astype(str)
-    .str.strip()
-    .str.upper()
-)
+# if STUDY_TYPE == 'HS':
+#     studysample_withcuts['EOC_GRADE'] = 14
 
 
 #------------------------------------------------------------------------------
-# KEEP AND RENAME REQUIRED CUT-SCORE FIELDS
+# VERIFY THAT PL_CODE AND PL_DESC EXIST
+#
+# These should already have been populated from:
+#   CUTS_PROFICIENCY_LEVEL
+#   CUTS_PROFICIENCY_NAME
 #------------------------------------------------------------------------------
 
-required_cuts_columns = [
-    "D_SUBJECT",
-    "SUBJECT",
-    "GRADE",
-    "PROFICIENCY_LEVEL",
-    "PROFICIENCY_NAME",
-    "MIN",
-    "MAX"
+# required_pl_columns = [
+#     'CUTS_PROFICIENCY_LEVEL',
+#     'CUTS_PROFICIENCY_NAME'
+# ]
+
+# missing_pl_columns = [
+#     column
+#     for column in required_pl_columns
+#     if column not in studysample_withcuts.columns
+# ]
+
+# if missing_pl_columns:
+#     raise KeyError(
+#         "The merged dataframe is missing required proficiency columns:\n"
+#         f"{missing_pl_columns}\n\n"
+#         "Available columns:\n"
+#         f"{studysample_withcuts.columns.tolist()}"
+#     )
+
+
+# # Populate the final PL fields from the cuts merge.
+# # Existing values are overwritten so they remain consistent with the cuts.
+
+# studysample_withcuts['PL_CODE'] = (
+#     studysample_withcuts['CUTS_PROFICIENCY_LEVEL']
+# )
+
+# studysample_withcuts['PL_DESC'] = (
+#     studysample_withcuts['CUTS_PROFICIENCY_NAME']
+# )
+
+
+#------------------------------------------------------------------------------
+# RACE REVIEW
+#------------------------------------------------------------------------------
+
+race = (
+    studysample_withcuts[
+        [
+            'M_NWEA_ETHNIC_GROUP_NAME',
+            'D_ETHNICITY',
+            'D_RACE'
+        ]
+    ]
+    .value_counts(dropna=False)
+    .reset_index(name='count')
+    .sort_values(
+        [
+            'D_ETHNICITY',
+            'D_RACE',
+            'M_NWEA_ETHNIC_GROUP_NAME'
+        ],
+        na_position='last'
+    )
+    .reset_index(drop=True)
+)
+
+
+# Final race fields to be manually populated during review
+
+race['RACE'] = ''
+race['RACE_DESC'] = ''
+
+
+#------------------------------------------------------------------------------
+# PL REVIEW
+#
+# Includes the incoming district PL field when it is available.
+#------------------------------------------------------------------------------
+
+pl_columns = [
+    'D_SUBJECT',
+    'D_GRADE_CLEAN',
+    'CUTS_PROFICIENCY_LEVEL',
+    'CUTS_PROFICIENCY_NAME',
+    'PL_CODE',
+    'PL_DESC'
 ]
 
-missing_cuts_columns = [
-    column
-    for column in required_cuts_columns
-    if column not in cuts_df.columns
+
+# Include these optional source columns when present
+
+optional_pl_columns = [
+    'M_SUBJECT',
+    'D_PL'
 ]
 
-if missing_cuts_columns:
+for column in optional_pl_columns:
+    if column in studysample_withcuts.columns:
+        pl_columns.insert(2, column)
+
+
+pl = (
+    studysample_withcuts[pl_columns]
+    .value_counts(dropna=False)
+    .reset_index(name='count')
+    .sort_values(
+        [
+            'D_SUBJECT',
+            'D_GRADE_CLEAN',
+            'PL_CODE'
+        ],
+        na_position='last'
+    )
+    .reset_index(drop=True)
+)
+
+
+#------------------------------------------------------------------------------
+# PL REVIEW BY DISTRICT
+#------------------------------------------------------------------------------
+
+pl_district_columns = [
+    'D_AGENCYCODE',
+    'D_DISTRICTNAME',
+    'D_SUBJECT',
+    'D_GRADE_CLEAN',
+    'D_PLCODE',
+    'D_PLDESC',    
+    'PL_CODE',
+    'PL_DESC'
+]
+
+
+for column in optional_pl_columns:
+    if column in studysample_withcuts.columns:
+        pl_district_columns.insert(3, column)
+
+
+pl_district = (
+    studysample_withcuts[pl_district_columns]
+    .value_counts(dropna=False)
+    .reset_index(name='count')
+    .sort_values(
+        [
+            'D_AGENCYCODE',
+            'D_DISTRICTNAME',
+            'D_SUBJECT',
+            'D_GRADE_CLEAN',           
+            'PL_CODE',
+            'PL_DESC'
+        ],
+        na_position='last'
+    )
+    .reset_index(drop=True)
+)
+
+
+#------------------------------------------------------------------------------
+# PL CODE REVIEW
+#
+# Compare district PL to cuts-derived PL.
+#------------------------------------------------------------------------------
+
+pl_code = (
+    studysample_withcuts[
+        [
+            'D_SUBJECT',
+            'D_GRADE_CLEAN',            
+            'D_PLCODE',
+            'D_PLDESC',           
+            'PL_CODE',
+            'PL_DESC'
+        ]
+    ]
+    .value_counts(dropna=False)
+    .reset_index(name='count')
+    .sort_values(
+        [
+            'D_SUBJECT',
+            'D_GRADE_CLEAN',
+            'PL_CODE',
+            'D_PLCODE',
+            'D_PLDESC'
+        ],
+        na_position='last'
+    )
+    .reset_index(drop=True)
+)
+
+
+#------------------------------------------------------------------------------
+# SEX REVIEW
+#
+# Use M_STUDENT_GENDER when present. Fall back to M_SEX for datasets that
+# still use the older field name.
+#------------------------------------------------------------------------------
+
+if 'M_STUDENT_GENDER' in studysample_withcuts.columns:
+    nwea_sex_column = 'M_STUDENT_GENDER'
+
+elif 'M_SEX' in studysample_withcuts.columns:
+    nwea_sex_column = 'M_SEX'
+
+else:
     raise KeyError(
-        "The Cut_scores worksheet is missing required columns:\n"
-        f"{missing_cuts_columns}\n\n"
-        f"Available columns:\n{cuts_df.columns.tolist()}"
+        "Neither M_STUDENT_GENDER nor M_SEX was found in the merged dataframe."
     )
 
-cuts_df = cuts_df[required_cuts_columns].copy()
 
-cuts_df = cuts_df.rename(
-    columns={
-        "D_SUBJECT": "CUTS_D_SUBJECT",
-        "SUBJECT": "CUTS_SUBJECT",
-        "GRADE": "CUTS_GRADE",
-        "PROFICIENCY_LEVEL": "CUTS_PROFICIENCY_LEVEL",
-        "PROFICIENCY_NAME": "CUTS_PROFICIENCY_NAME",
-        "MIN": "CUTS_MIN",
-        "MAX": "CUTS_MAX"
-    }
+sex = (
+    studysample_withcuts[
+        [
+            nwea_sex_column,
+            'D_SEX'
+        ]
+    ]
+    .value_counts(dropna=False)
+    .reset_index(name='count')
+    .sort_values(
+        [
+            'D_SEX',
+            nwea_sex_column
+        ],
+        na_position='last'
+    )
+    .reset_index(drop=True)
 )
 
 
-#------------------------------------------------------------------------------
-# STANDARDIZE MERGE FIELDS
-#------------------------------------------------------------------------------
+# Final sex field to be manually populated during review
 
-studysample_df["D_SUBJECT"] = (
-    studysample_df["D_SUBJECT"]
-    .astype("string")
-    .str.strip()
+sex['SEX'] = ''
+
+
+#==============================================================================
+# OUTPUT REVIEW WORKBOOK
+#==============================================================================
+
+# Keep only columns 1 and 2 from race_mapping
+race_mapping_output = race_mapping.iloc[:, 0:2].copy()
+
+
+output_dict = {
+    'raw_PL': pl,
+    'raw_pl_by_district': pl_district,
+    'PL_code': pl_code,
+    'raw_sex': sex
+}
+
+
+if not os.path.exists(CUTS_DEMO_WORKSHEETS_FILE):
+
+    print()
+    print('Outputting Cuts/Demo Review Workbook:')
+    print(CUTS_DEMO_WORKSHEETS_FILE)
+    print()
+
+    with pd.ExcelWriter(
+        CUTS_DEMO_WORKSHEETS_FILE,
+        engine='openpyxl'
+    ) as writer:
+
+        #--------------------------------------------------------------
+        # RACE WORKSHEET
+        #
+        # Write race data on the left.
+        # Write the first two race_mapping columns on the right,
+        # leaving two blank Excel columns between the tables.
+        #--------------------------------------------------------------
+
+        race.to_excel(
+            writer,
+            sheet_name='raw_Race_and_eth',
+            index=False,
+            startrow=0,
+            startcol=0
+        )
+
+        race_mapping_start_column = len(race.columns) + 2
+
+        race_mapping_output.to_excel(
+            writer,
+            sheet_name='raw_Race_and_eth',
+            index=False,
+            startrow=0,
+            startcol=race_mapping_start_column
+        )
+
+        #--------------------------------------------------------------
+        # REMAINING WORKSHEETS
+        #--------------------------------------------------------------
+
+        for sheet_name, dataframe in output_dict.items():
+
+            dataframe.to_excel(
+                writer,
+                sheet_name=sheet_name,
+                index=False
+            )
+
+    print('Cuts/Demo Review Workbook successfully created.')
+    print()
+
+
+else:
+
+    print()
+    print(
+        'Cuts/Demo Review Workbook already exists and will not '
+        'be overwritten:'
+    )
+    print(CUTS_DEMO_WORKSHEETS_FILE)
+    print()
+    
+    
+    
+#=============================================================================
+# PART 2-- manually EDIT THE ABOVE WORKSHEETS IF NECESSARY.
+# THEN HIT ENTER TO RESUME.
+#=============================================================================
+
+print("/n SETP 1 complete. Please edit the Excel file now.")
+input("Press Enter to continue to Step 2...")
+
+#=============================================================================
+# PART 2-- manually EDIT THE ABOVE WORKSHEETS IF NECESSARY.
+# THEN HIT ENTER TO RESUME.
+#=============================================================================
+
+
+# ==============================================================
+# RE-IMPORT MANUALLY EDITED SHEETS
+# ==============================================================
+
+race_worksheet = pd.read_excel(
+    CUTS_DEMO_WORKSHEETS_FILE,
+    sheet_name='raw_Race_and_eth',
+    dtype=str
+).iloc[:, :6]
+
+
+pl_worksheet = pd.read_excel(
+    CUTS_DEMO_WORKSHEETS_FILE,
+    sheet_name='raw_PL',
+    dtype=str
 )
 
-cuts_df["CUTS_D_SUBJECT"] = (
-    cuts_df["CUTS_D_SUBJECT"]
-    .astype("string")
-    .str.strip()
-)
-
-studysample_df["D_GRADE_CLEAN"] = pd.to_numeric(
-    studysample_df["D_GRADE_CLEAN"],
-    errors="coerce"
-).astype("Int64")
-
-cuts_df["CUTS_GRADE"] = pd.to_numeric(
-    cuts_df["CUTS_GRADE"],
-    errors="coerce"
-).astype("Int64")
-
-studysample_df["D_SS"] = pd.to_numeric(
-    studysample_df["D_SS"],
-    errors="coerce"
-)
-
-cuts_df["CUTS_MIN"] = pd.to_numeric(
-    cuts_df["CUTS_MIN"],
-    errors="coerce"
-)
-
-cuts_df["CUTS_MAX"] = pd.to_numeric(
-    cuts_df["CUTS_MAX"],
-    errors="coerce"
+sex_worksheet = pd.read_excel(
+    CUTS_DEMO_WORKSHEETS_FILE,
+    sheet_name='raw_sex',
+    dtype=str
 )
 
 
-#------------------------------------------------------------------------------
-# MERGE EACH STUDENT RECORD TO ALL CUT BANDS FOR ITS SUBJECT AND GRADE
-#------------------------------------------------------------------------------
 
-studysample_withcuts = pd.merge(
-    studysample_df,
-    cuts_df,
-    how="left",
-    left_on=[
-        "D_SUBJECT",
-        "D_GRADE_CLEAN"
-    ],
-    right_on=[
-        "CUTS_D_SUBJECT",
-        "CUTS_GRADE"
-    ],
-    indicator="CUTS_MERGE_STATUS"
+# ----------------------------------------------------------
+# UPLOAD MANUALLY EDITED WORKSHEETS TO SNOWFLAKE
+# ----------------------------------------------------------
+
+
+
+CONN = establish_snowflake_connector(
+    SNOWFLAKEUSER,
+    ROLE,
+    WAREHOUSE,
+    DATABASE=DATABASE,
+    SCHEMA=SCHEMA
 )
 
+#----------------------------------------------------------
+# SEX
+#----------------------------------------------------------
+success, nchunks, nrows, _ = write_pandas(
+    CONN,
+    sex_worksheet,
+    table_name=sex_table_name,
+    quote_identifiers=False,
+    overwrite=True,
+    auto_create_table=True
+)
 
-# #------------------------------------------------------------------------------
-# # KEEP THE CUT BAND CONTAINING THE STUDENT'S STATE SCALE SCORE
-# #------------------------------------------------------------------------------
-
-# score_in_cut_range = (
-#     studysample_withcuts["D_SS"].ge(
-#         studysample_withcuts["CUTS_MIN"]
-#     )
-#     &
-#     studysample_withcuts["D_SS"].le(
-#         studysample_withcuts["CUTS_MAX"]
-#     )
-# )
-
-# studysample_withcuts = (
-#     studysample_withcuts
-#     .loc[score_in_cut_range]
-#     .copy()
-# )
+print(f"{sex_table_name}: {nrows:,} rows")
 
 
-# #------------------------------------------------------------------------------
-# # RACE / ETHNICITY REVIEW TAB
-# #------------------------------------------------------------------------------
+#----------------------------------------------------------
+# PL
+#----------------------------------------------------------
+success, nchunks, nrows, _ = write_pandas(
+    CONN,
+    pl_worksheet,
+    table_name=pl_table_name,
+    quote_identifiers=True,
+    overwrite=True,
+    auto_create_table=True
+)
 
-# race = (
-#     studysample_withcuts[
-#         [
-#             "M_NWEA_ETHNIC_GROUP_NAME",
-#             "D_ETHNICITY",
-#             "D_RACE"
-#         ]
-#     ]
-#     .value_counts(dropna=False)
-#     .reset_index(name="COUNT")
-#     .sort_values(
-#         by=[
-#             "D_ETHNICITY",
-#             "D_RACE",
-#             "M_NWEA_ETHNIC_GROUP_NAME"
-#         ],
-#         na_position="last"
-#     )
-#     .reset_index(drop=True)
-# )
-
-# # Fields to complete during manual review
-# race["RACE"] = ""
-# race["RACE_DESC"] = ""
+print(f"{pl_table_name}: {nrows:,} rows")
 
 
-# #------------------------------------------------------------------------------
-# # SEX / GENDER REVIEW TAB
-# #------------------------------------------------------------------------------
+#----------------------------------------------------------
+# RACE
+#----------------------------------------------------------
+success, nchunks, nrows, _ = write_pandas(
+    CONN,
+    race_worksheet,
+    table_name=race_table_name,
+    quote_identifiers=True,
+    overwrite=True,
+    auto_create_table=True
+)
 
-# sex = (
-#     studysample_withcuts[
-#         [
-#             "M_STUDENT_GENDER",
-#             "D_SEX"
-#         ]
-#     ]
-#     .value_counts(dropna=False)
-#     .reset_index(name="COUNT")
-#     .sort_values(
-#         by=[
-#             "D_SEX",
-#             "M_STUDENT_GENDER"
-#         ],
-#         na_position="last"
-#     )
-#     .reset_index(drop=True)
-# )
-
-# # Final numeric study-sample sex value
-# sex["SEX"] = ""
+print(f"{race_table_name}: {nrows:,} rows")
 
 
-# #------------------------------------------------------------------------------
-# # PERFORMANCE-LEVEL REVIEW TAB
-# #
-# # Shows district-provided PL beside the score-derived cuts PL.
-# #------------------------------------------------------------------------------
+CONN.commit()
+CONN.close()
 
-# pl = (
-#     studysample_withcuts[
-#         [
-#             "D_SUBJECT",
-#             "M_SUBJECT",
-#             "D_GRADE_CLEAN",
-#             "M_TEST_NAME",
-#             "D_PLCODE",
-#             "D_PLDESC",
-#             "CUTS_PROFICIENCY_LEVEL",
-#             "CUTS_PROFICIENCY_NAME",
-#             "CUTS_MIN",
-#             "CUTS_MAX"
-#         ]
-#     ]
-#     .value_counts(dropna=False)
-#     .reset_index(name="COUNT")
-#     .sort_values(
-#         by=[
-#             "D_SUBJECT",
-#             "M_SUBJECT",
-#             "D_GRADE_CLEAN",
-#             "CUTS_PROFICIENCY_LEVEL",
-#             "D_PLCODE"
-#         ],
-#         na_position="last"
-#     )
-#     .reset_index(drop=True)
-# )
-
-# # Final reviewed values
-# pl["PL_CODE"] = ""
-# pl["PL_DESC"] = ""
-
-
-# #------------------------------------------------------------------------------
-# # PL-BY-DISTRICT REVIEW TAB
-# #
-# # Your current query does not include a district field. This tab will be
-# # produced when D_DISTRICTNAME is added to the Snowflake SELECT.
-# #------------------------------------------------------------------------------
-
-# if "D_DISTRICTNAME" in studysample_withcuts.columns:
-
-#     pl_district = (
-#         studysample_withcuts[
-#             [
-#                 "D_DISTRICTNAME",
-#                 "D_SUBJECT",
-#                 "M_SUBJECT",
-#                 "D_GRADE_CLEAN",
-#                 "M_TEST_NAME",
-#                 "D_PLCODE",
-#                 "D_PLDESC",
-#                 "CUTS_PROFICIENCY_LEVEL",
-#                 "CUTS_PROFICIENCY_NAME",
-#                 "CUTS_MIN",
-#                 "CUTS_MAX"
-#             ]
-#         ]
-#         .value_counts(dropna=False)
-#         .reset_index(name="COUNT")
-#         .sort_values(
-#             by=[
-#                 "D_DISTRICTNAME",
-#                 "D_SUBJECT",
-#                 "M_SUBJECT",
-#                 "D_GRADE_CLEAN",
-#                 "CUTS_PROFICIENCY_LEVEL"
-#             ],
-#             na_position="last"
-#         )
-#         .reset_index(drop=True)
-#     )
-
-#     pl_district["PL_CODE"] = ""
-#     pl_district["PL_DESC"] = ""
-
-# else:
-
-#     pl_district = pd.DataFrame(
-#         {
-#             "MESSAGE": [
-#                 "D_DISTRICTNAME was not included in the Snowflake query. "
-#                 "Add it to the SELECT clause to populate this worksheet."
-#             ]
-#         }
-#     )
-
-
-# #------------------------------------------------------------------------------
-# # OPTIONAL CUT-MERGE QA TAB
-# #
-# # Identifies Snowflake records for which no valid subject/grade/score band
-# # was found. This is useful for LOSS/HOSS and cuts-file troubleshooting.
-# #------------------------------------------------------------------------------
-
-# records_with_valid_cut = set(
-#     studysample_withcuts["M_TEST_EVENT_BUSINESS_IDENTIFIER"]
-#     .dropna()
-#     .astype(str)
-# )
-
-# cuts_merge_qa = (
-#     studysample_df.loc[
-#         ~studysample_df[
-#             "M_TEST_EVENT_BUSINESS_IDENTIFIER"
-#         ].astype(str).isin(records_with_valid_cut),
-#         [
-#             "M_STUDENT_BUSINESS_IDENTIFIER",
-#             "M_TEST_EVENT_BUSINESS_IDENTIFIER",
-#             "D_SUBJECT",
-#             "D_GRADE_CLEAN",
-#             "D_SS",
-#             "D_PLCODE",
-#             "D_PLDESC"
-#         ]
-#     ]
-#     .copy()
-# )
-
-# cuts_merge_qa["QA_REASON"] = (
-#     "No matching subject/grade/cut-score range"
-# )
-
-
-# #------------------------------------------------------------------------------
-# # CREATE OUTPUT FOLDER IF NECESSARY
-# #------------------------------------------------------------------------------
-
-# CUTS_DEMO_FILES.mkdir(
-#     parents=True,
-#     exist_ok=True
-# )
-
-
-# #------------------------------------------------------------------------------
-# # EXPORT REVIEW WORKBOOK
-# #------------------------------------------------------------------------------
-
-# with pd.ExcelWriter(
-#     CUTS_DEMO_WORKSHEETS_FILE,
-#     engine="openpyxl",
-#     mode="w"
-# ) as writer:
-
-#     race.to_excel(
-#         writer,
-#         sheet_name="raw_Race_and_eth",
-#         index=False
-#     )
-
-#     pl.to_excel(
-#         writer,
-#         sheet_name="raw_PL",
-#         index=False
-#     )
-
-#     pl_district.to_excel(
-#         writer,
-#         sheet_name="raw_pl_by_district",
-#         index=False
-#     )
-
-#     sex.to_excel(
-#         writer,
-#         sheet_name="raw_sex",
-#         index=False
-#     )
-
-#     cuts_merge_qa.to_excel(
-#         writer,
-#         sheet_name="cuts_merge_QA",
-#         index=False
-#     )
-
-#     # Basic review-friendly formatting
-#     for worksheet in writer.book.worksheets:
-
-#         worksheet.freeze_panes = "A2"
-#         worksheet.auto_filter.ref = worksheet.dimensions
-
-#         for column_cells in worksheet.columns:
-#             values = [
-#                 "" if cell.value is None else str(cell.value)
-#                 for cell in column_cells
-#             ]
-
-#             width = min(
-#                 max(
-#                     len(value)
-#                     for value in values
-#                 ) + 2,
-#                 40
-#             )
-
-#             worksheet.column_dimensions[
-#                 column_cells[0].column_letter
-#             ].width = width
-
-
-# print()
-# print("Cuts/demo review workbook created:")
-# print(CUTS_DEMO_WORKSHEETS_FILE)
-# print()
-
-# print("Worksheet row counts:")
-# print(f"  raw_Race_and_eth:    {len(race):,}")
-# print(f"  raw_PL:              {len(pl):,}")
-# print(f"  raw_pl_by_district:  {len(pl_district):,}")
-# print(f"  raw_sex:             {len(sex):,}")
-# print(f"  cuts_merge_QA:       {len(cuts_merge_qa):,}")
+print("Worksheet uploads complete.")
