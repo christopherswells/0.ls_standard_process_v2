@@ -216,7 +216,7 @@ cuts_df = cuts_df.rename(
 
 
 #-----------------------------------------
-#  EOC(HS) AND ANY STUDY THAT IS NOT
+# EOC(HS) AND ANY STUDY THAT IS NOT
 # LABELLED EOG OR SP IN CUTS FILE
 # AND THIS CODE'S SETTINGS ABOVE
 # WILL NOT USE GRADE IN MERGE CONDITIONS
@@ -696,10 +696,11 @@ pl_code = (
     .sort_values(
         [
             'D_SUBJECT',
-            'D_GRADE_CLEAN',
-            'PL_CODE',
+            'D_GRADE_CLEAN',            
             'D_PLCODE',
-            'D_PLDESC'
+            'D_PLDESC',
+            'PL_CODE',
+            'PL_DESC'
         ],
         na_position='last'
     )
@@ -720,17 +721,18 @@ pl_code = pl_code[
         'D_GRADE_CLEAN',
         'D_PLCODE',
         'D_PLDESC',
+        'COUNT',
         'PL_CODE',
         'PL_DESC',
-        'COUNT'
+        
     ]
 ]
 
 # reviewer edits THESE fields
-# pl_code['REVIEWED_PL_CODE'] = pl_code['PL_CODE']
-# pl_code['REVIEWED_PL_DESC'] = pl_code['PL_DESC']
+pl_code['REVIEWED_PL_CODE'] = pl_code['PL_CODE']
+pl_code['REVIEWED_PL_DESC'] = pl_code['PL_DESC']
 
-
+#  ** INSTEAD, EDIT THE PL_CODE AND PL_DESC DIRECTLY***
 
 #-------------------------------------------------------------
 # Merge PL review marker back to study sample
@@ -739,18 +741,25 @@ pl_code = pl_code[
 studysample_withcuts = studysample_withcuts.merge(
     pl_code[
         [
+            'PL_REVIEW_MARKER',
             'D_SUBJECT',
             'D_GRADE_CLEAN',
             'D_PLCODE',
             'D_PLDESC',
-            'PL_REVIEW_MARKER'
-        ]
-    ],
-    on=[
+            'COUNT',
+            'PL_CODE',
+            'PL_DESC',
+            'REVIEWED_PL_CODE',
+            'REVIEWED_PL_DESC'
+            
+    ]],
+    on=[        
         'D_SUBJECT',
         'D_GRADE_CLEAN',
         'D_PLCODE',
-        'D_PLDESC'
+        'D_PLDESC',
+        'PL_CODE',
+        'PL_DESC'
     ],
     how='left'
 )
@@ -853,7 +862,7 @@ race_mapping_output = race_mapping.iloc[:, 0:2].copy()
 
 
 output_dict = {
-    'raw_PL': pl,
+    # 'raw_PL': pl,
     'raw_pl_by_district': pl_district,
     'PL_code': pl_code,
     'raw_sex': sex
@@ -970,6 +979,12 @@ sex_worksheet = pd.read_excel(
 
 # ----------------------------------------------------------
 # UPLOAD MANUALLY EDITED WORKSHEETS TO SNOWFLAKE
+#
+# THIS WAS TO MERGE WORKSHEET EDITS INTO STUDYSAMPLE IN 
+# SNOWFLAKE.
+#
+# MAYBE NOT NECESSARY NOW AS WHOLE STUDYSAMPLE_QA IS BEING
+# DONWLOADED FOR UPDATES FROM WORKSHEETS.
 # ----------------------------------------------------------
 
 
