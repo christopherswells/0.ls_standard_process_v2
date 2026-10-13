@@ -7,8 +7,10 @@ from pathlib import Path
 import re
 import shutil
 from typing import Optional
-
+from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 import pandas as pd
+import numpy as np
 
 try:
     from pycode.settings import *
@@ -53,13 +55,151 @@ def read_file(path: Path) -> pd.DataFrame:
     raise errors[-1]
 
 
+# def write_file(df: pd.DataFrame, path: Path) -> Path:
+#     if path.suffix.lower() == ".csv":
+#         df.to_csv(path, index=False)
+#         return path
+#     output = path if path.suffix.lower() == ".xlsx" else path.with_suffix(".xlsx")
+#     df.to_excel(output, index=False, engine="openpyxl", na_rep="")
+#     return output
+
+'''cleans/normalizes nulls'''
 def write_file(df: pd.DataFrame, path: Path) -> Path:
+    """
+    Clean a dataframe and write it to CSV or Excel.
+
+    Cleaning performed:
+    - pd.NA, NaN, and None become blank cells
+    - blank strings and common missing-value placeholders become blank cells
+    - illegal Excel XML characters are removed from headers and data cells
+    """
+
+    df = df.copy().astype(object)
+
+    missing_placeholders = {
+        "",
+        "-",
+        "--",
+        "NA",
+        "<NA>",
+        "N/A",
+        "NULL",
+        "NONE",
+    }
+
+    illegal_header_count = 0
+    illegal_cell_count = 0
+    placeholder_count = 0
+
+    # ---------------------------------------------------------------
+    # Clean column names
+    # ---------------------------------------------------------------
+
+    cleaned_columns = []
+
+    for column in df.columns:
+        column_text = str(column)
+        cleaned_column = ILLEGAL_CHARACTERS_RE.sub("", column_text)
+
+        if cleaned_column != column_text:
+            illegal_header_count += 1
+
+            print("\nCLEANED ILLEGAL CHARACTER FROM COLUMN HEADER")
+            print(f"Original header: {repr(column_text)}")
+            print(f"Cleaned header : {repr(cleaned_column)}")
+
+        cleaned_columns.append(cleaned_column)
+
+    df.columns = cleaned_columns
+
+    # ---------------------------------------------------------------
+    # Clean dataframe values
+    # ---------------------------------------------------------------
+
+    def clean_cell(value):
+        nonlocal illegal_cell_count
+        nonlocal placeholder_count
+
+        # Convert pd.NA, NaN, and None to blank
+        if pd.isna(value):
+            return ""
+
+        if isinstance(value, str):
+            stripped_value = value.strip()
+
+            # Convert common missing-value placeholders to blank.
+            # Matching is case-insensitive.
+            if stripped_value.upper() in missing_placeholders:
+                placeholder_count += 1
+                return ""
+
+            # Remove characters Excel/OpenXML cannot store
+            cleaned_value = ILLEGAL_CHARACTERS_RE.sub("", value)
+
+            if cleaned_value != value:
+                illegal_cell_count += 1
+
+                print("\nCLEANED ILLEGAL CHARACTER FROM DATA CELL")
+                print(f"Original value: {repr(value)}")
+                print(f"Cleaned value : {repr(cleaned_value)}")
+
+            return cleaned_value
+
+        return value
+
+    df = df.applymap(clean_cell)
+
+    # ---------------------------------------------------------------
+    # Display cleaning summary
+    # ---------------------------------------------------------------
+
+    if (
+        illegal_header_count
+        or illegal_cell_count
+        or placeholder_count
+    ):
+        print("\n" + "=" * 80)
+        print("FILE CLEANING SUMMARY")
+        print("=" * 80)
+        print(
+            f"Column headers with illegal characters: "
+            f"{illegal_header_count:,}"
+        )
+        print(
+            f"Data cells with illegal characters: "
+            f"{illegal_cell_count:,}"
+        )
+        print(
+            f"Missing-value placeholders converted to blanks: "
+            f"{placeholder_count:,}"
+        )
+
+    # ---------------------------------------------------------------
+    # Write output
+    # ---------------------------------------------------------------
+
     if path.suffix.lower() == ".csv":
-        df.to_csv(path, index=False)
+        df.to_csv(
+            path,
+            index=False,
+        )
         return path
-    output = path if path.suffix.lower() == ".xlsx" else path.with_suffix(".xlsx")
-    df.to_excel(output, index=False, engine="openpyxl", na_rep="")
+
+    output = (
+        path
+        if path.suffix.lower() == ".xlsx"
+        else path.with_suffix(".xlsx")
+    )
+
+    df.to_excel(
+        output,
+        index=False,
+        engine="openpyxl",
+        na_rep="",
+    )
+
     return output
+
 
 
 def extract_agency_code(filename: str) -> Optional[str]:
@@ -248,7 +388,12 @@ def process_new_originals(expected: int, log: pd.DataFrame) -> pd.DataFrame:
         passed = received == expected
         target = WORKING_FILES / (original if passed else rejected_filename(original))
         remove_conflict(target)
-        written = write_file(add_metadata(df, original), target)
+        
+        
+        df_to_write = add_metadata(df, original)            
+       
+        written = write_file(df_to_write, target)
+        
         log = upsert_log(log, original, today, today if passed else pd.NA, records,
                          "WORKING" if passed else "REJECTED_WORKING_FOLDER",
                          pd.NA if passed else f"expected_cols={expected}; received_cols={received}")
@@ -299,6 +444,21 @@ def process_flagged_working(expected: int, log: pd.DataFrame) -> pd.DataFrame:
 
         try:
             df = read_file(source)
+            
+            df = df.replace(
+            [
+                "",
+                " ",
+                "-",
+                "--",
+                "NA",
+                "<NA>",
+                "N/A",
+                "NULL",
+                "NONE"
+            ],
+            pd.NA
+        )
 
         except Exception as exc:
 
