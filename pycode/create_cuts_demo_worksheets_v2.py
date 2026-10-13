@@ -165,7 +165,7 @@ print(studysample_df.columns.tolist())
 
 #ADD LOSS HOSS
 #------------------------------------------------------------------------------
-# ADD LOSS / HOSS TO CUT SCORES
+# ADD LOSS / HOSS TO CUT SCORES  EOG dif from EOC
 #------------------------------------------------------------------------------
 
 if STUDY_TYPE in ['EOG', 'SP']:
@@ -246,6 +246,13 @@ studysample_for_merge['_STUDY_ROW_ID'] = studysample_for_merge.index
 # Merge the study sample with all potentially applicable cuts.
 # Use a left merge so unmatched study-sample rows are retained
 # long enough to be written to the QA file.
+#
+# EOG by subject/grade/map_subject-- should be unique
+# EOC by subject/map_subject-- should be unique 
+#         (ENG2 vs. Eng1) will distinguish these two
+#         (1 vs 100) will distinguisch alg-alg vs. alg-math
+#
+# This will be the exploded merge prior to cuts applied to data. 
 # ------------------------------------------------------------
 if STUDY_TYPE in ['EOG', 'SP']:
 
@@ -368,11 +375,26 @@ qa_dropped_from_cuts.loc[
 
 
 
+#------------------------------------------------
+# QA dropped Reason-- no qualifying cuts record
+# should only exist if gaps exist in cuts data
+#-----------------------------------------------
+qa_dropped_from_cuts['CUTS_DROP_REASON'].value_counts(dropna = False)
+
+
+#district problem?-- maybe grade wrong or subjects out or order?
+qa_dropped_from_cuts[['D_DISTRICTNAME','D_AGENCYCODE']].value_counts()
+
+
+
+
 
 # ------------------------------------------------------------
 # Keep only the cuts rows that:
 #   1. Qualify using SS_ADJ, and
 #   2. Belong to a study row with exactly one qualifying cut.
+#
+#  qa-  merged may have fewer rows than studysample_df 
 # ------------------------------------------------------------
 valid_study_row_ids = studysample_for_merge.loc[
     studysample_for_merge['CUTS_MATCH_COUNT'].eq(1),
@@ -458,6 +480,9 @@ merged['PL_DESC'] = merged['CUTS_PROFICIENCY_NAME']
 
 
 #------------------------------------------------------------------------------
+
+# I think unnecesary now that whole studysample is dowloaded to update.
+
 # CREATE SCORES TO MERGE BACK TO DATA
 # RECORDS THAT DID NOT DROP WILL HAVE SS_ADJ TO MERGE BACK
 # ALSO pl_code AND pl_desc --> all of THESE MAY BE UPDATED BY WORKSHEETS BELOW.
@@ -639,8 +664,8 @@ studysample_withcuts = studysample_withcuts.merge(
 pl_district_columns = [
     'D_AGENCYCODE',
     'D_DISTRICTNAME',
-    'D_SUBJECT',
-    'D_GRADE_CLEAN',
+    # 'D_SUBJECT',
+    # 'D_GRADE_CLEAN',
     'D_PLCODE',
     'D_PLDESC',    
     'PL_CODE',
@@ -661,8 +686,8 @@ pl_district = (
         [
             'D_AGENCYCODE',
             'D_DISTRICTNAME',
-            'D_SUBJECT',
-            'D_GRADE_CLEAN',           
+            # 'D_SUBJECT',
+            # 'D_GRADE_CLEAN',           
             'PL_CODE',
             'PL_DESC'
         ],
@@ -683,8 +708,8 @@ pl_district = (
 pl_code = (
     studysample_withcuts[
         [
-            'D_SUBJECT',
-            'D_GRADE_CLEAN',
+            # 'D_SUBJECT',
+            # 'D_GRADE_CLEAN',
             'D_PLCODE',
             'D_PLDESC',
             'PL_CODE',
@@ -695,8 +720,8 @@ pl_code = (
     .reset_index(name='COUNT')
     .sort_values(
         [
-            'D_SUBJECT',
-            'D_GRADE_CLEAN',            
+            # 'D_SUBJECT',
+            # 'D_GRADE_CLEAN',            
             'D_PLCODE',
             'D_PLDESC',
             'PL_CODE',
@@ -717,8 +742,8 @@ pl_code['PL_REVIEW_MARKER'] = (
 pl_code = pl_code[
     [
         'PL_REVIEW_MARKER',
-        'D_SUBJECT',
-        'D_GRADE_CLEAN',
+        # 'D_SUBJECT',
+        # 'D_GRADE_CLEAN',
         'D_PLCODE',
         'D_PLDESC',
         'COUNT',
@@ -742,8 +767,8 @@ studysample_withcuts = studysample_withcuts.merge(
     pl_code[
         [
             'PL_REVIEW_MARKER',
-            'D_SUBJECT',
-            'D_GRADE_CLEAN',
+            # 'D_SUBJECT',
+            # 'D_GRADE_CLEAN',
             'D_PLCODE',
             'D_PLDESC',
             'COUNT',
@@ -754,8 +779,8 @@ studysample_withcuts = studysample_withcuts.merge(
             
     ]],
     on=[        
-        'D_SUBJECT',
-        'D_GRADE_CLEAN',
+        # 'D_SUBJECT',
+        # 'D_GRADE_CLEAN',
         'D_PLCODE',
         'D_PLDESC',
         'PL_CODE',
@@ -953,14 +978,14 @@ input("Press Enter to continue to Step 2...")
 # RE-IMPORT MANUALLY EDITED SHEETS
 # ==============================================================
 
-# TEMP-- REGULARE FILES BLOCKED FOR EDIT OR RENAME.
+# TEMP-- REGULAR FILES BLOCKED FOR EDIT OR RENAME.
 # CUTS_DEMP_WORKSHEETS_FILE = r'S:\MAPGrowth\Linking\Data Files\2026\TX\cuts_demo_files\TX_Cuts_Demographic_Worksheets_EOG_edited.xlsx'
 
 race_worksheet = pd.read_excel(
     CUTS_DEMO_WORKSHEETS_FILE,
     sheet_name='raw_Race_and_eth',
     dtype=str
-).iloc[:, :6]
+).iloc[:, :8]
 
 
 pl_worksheet = pd.read_excel(
@@ -1074,247 +1099,330 @@ sex_worksheet = pd.read_excel(
 #==============================================================================
 
 
-#=========================================================
-# MERGE SEX AND RACE WORKSHEETS
-# Handles NULL values in merge keys
-#=========================================================
 
-#=========================================================
-# SEX LOOKUP
-#=========================================================
 
-sex_keys = [
-    'M_STUDENT_GENDER',
-    'D_SEX'
-]
+#==============================================================================
+# UPDATE STUDYSAMPLE_WITHCUTS USING REVIEW MARKERS
+#
+# Each worksheet marker must identify exactly one worksheet row.
+# Mapping by marker does not change the number of study-sample rows.
+#==============================================================================
 
-for col in sex_keys:
+starting_row_count = len(studysample_withcuts)
 
-    studysample_withcuts[col] = (
-        studysample_withcuts[col]
+
+def clean_marker_column(dataframe, marker_column):
+
+    if marker_column not in dataframe.columns:
+        raise KeyError(
+            f"{marker_column} was not found in the dataframe."
+        )
+
+    dataframe[marker_column] = (
+        dataframe[marker_column]
         .astype('string')
         .str.strip()
         .replace('', pd.NA)
     )
 
-    sex_worksheet[col] = (
-        sex_worksheet[col]
-        .astype('string')
-        .str.strip()
-        .replace('', pd.NA)
+
+def validate_marker_lookup(
+    worksheet,
+    marker_column,
+    value_columns
+):
+
+    missing_columns = [
+        column
+        for column in [marker_column] + value_columns
+        if column not in worksheet.columns
+    ]
+
+    if missing_columns:
+        raise KeyError(
+            f"Worksheet is missing required columns: "
+            f"{missing_columns}"
+        )
+
+    missing_markers = worksheet[
+        worksheet[marker_column].isna()
+    ]
+
+    if not missing_markers.empty:
+        raise ValueError(
+            f"{len(missing_markers):,} worksheet row(s) have a "
+            f"missing {marker_column}."
+        )
+
+    duplicate_markers = worksheet[
+        worksheet.duplicated(
+            subset=[marker_column],
+            keep=False
+        )
+    ].copy()
+
+    if not duplicate_markers.empty:
+
+        conflicting_markers = (
+            duplicate_markers
+            .groupby(
+                marker_column,
+                dropna=False
+            )[value_columns]
+            .nunique(dropna=False)
+            .gt(1)
+            .any(axis=1)
+        )
+
+        conflicting_markers = (
+            conflicting_markers[
+                conflicting_markers
+            ]
+            .index
+            .tolist()
+        )
+
+        if conflicting_markers:
+            raise ValueError(
+                f"Conflicting worksheet values were found for "
+                f"{marker_column}: {conflicting_markers}"
+            )
+
+        worksheet = worksheet.drop_duplicates(
+            subset=[marker_column],
+            keep='first'
+        ).copy()
+
+    return worksheet
+
+
+def update_from_marker(
+    target_dataframe,
+    worksheet,
+    marker_column,
+    value_columns
+):
+
+    clean_marker_column(
+        target_dataframe,
+        marker_column
     )
 
-sex_lookup = (
-    sex_worksheet
-    .drop_duplicates(subset=sex_keys)
-    .set_index(sex_keys)['SEX']
+    clean_marker_column(
+        worksheet,
+        marker_column
+    )
+
+    worksheet = validate_marker_lookup(
+        worksheet=worksheet,
+        marker_column=marker_column,
+        value_columns=value_columns
+    )
+
+    target_markers = set(
+        target_dataframe[marker_column]
+        .dropna()
+        .unique()
+    )
+
+    worksheet_markers = set(
+        worksheet[marker_column]
+        .dropna()
+        .unique()
+    )
+
+    missing_from_worksheet = sorted(
+        target_markers - worksheet_markers
+    )
+
+    if missing_from_worksheet:
+        raise ValueError(
+            f"{len(missing_from_worksheet):,} {marker_column} "
+            f"value(s) from studysample_withcuts were not found "
+            f"in the edited worksheet: "
+            f"{missing_from_worksheet}"
+        )
+
+    worksheet_lookup = (
+        worksheet
+        .set_index(marker_column)
+    )
+
+    for value_column in value_columns:
+
+        target_dataframe[value_column] = (
+            target_dataframe[marker_column]
+            .map(worksheet_lookup[value_column])
+        )
+
+    return target_dataframe
+
+
+#==============================================================================
+# SEX
+#==============================================================================
+
+studysample_withcuts = update_from_marker(
+    target_dataframe=studysample_withcuts,
+    worksheet=sex_worksheet,
+    marker_column='SEX_REVIEW_MARKER',
+    value_columns=[
+        'SEX'
+    ]
 )
 
-sex_index = (
-    studysample_withcuts
-    .set_index(sex_keys)
-    .index
-)
 
-studysample_withcuts['SEX'] = sex_index.map(sex_lookup)
+#==============================================================================
+# RACE
+#==============================================================================
 
-#========
-# QA
-#========
-studysample_withcuts[['SEX']].value_counts(dropna = False)
-
-
-
-#=========================================================
-# RACE LOOKUP
-#=========================================================
-
-race_keys = [
-    'M_NWEA_ETHNIC_GROUP_NAME',
-    'D_ETHNICITY',
-    'D_RACE'
-]
-
-for col in race_keys:
-
-    studysample_withcuts[col] = (
-        studysample_withcuts[col]
-        .astype('string')
-        .str.strip()
-        .replace('', pd.NA)
-    )
-
-    race_worksheet[col] = (
-        race_worksheet[col]
-        .astype('string')
-        .str.strip()
-        .replace('', pd.NA)
-    )
-
-# optional QA
-dupes = race_worksheet[
-    race_worksheet.duplicated(
-        subset=race_keys,
-        keep=False
-    )
-]
-
-if len(dupes) > 0:
-    print(
-        f'WARNING: {len(dupes):,} duplicate race mapping rows found'
-    )
-
-race_lookup = (
-    race_worksheet
-    .drop_duplicates(subset=race_keys)
-    .set_index(race_keys)
-)
-
-race_index = (
-    studysample_withcuts
-    .set_index(race_keys)
-    .index
-)
-
-studysample_withcuts['RACE'] = (
-    race_index.map(
-        race_lookup['RACE']
-    )
-)
-
-studysample_withcuts['RACE_DESC'] = (
-    race_index.map(
-        race_lookup['RACE_DESC']
-    )
-)
-    
-    
-#-----------------------
-# RACE QA COUNTS
-#----------------------
-studysample_withcuts[['RACE','RACE_DESC']].value_counts(dropna = False)
-
-
-# RACE MISSING -- UNIQUE COMBOS
-qa_race_missing = studysample_withcuts.loc[
-    studysample_withcuts['RACE'].isna(),
-    [
-        'M_NWEA_ETHNIC_GROUP_NAME',
-        'D_ETHNICITY',
-        'D_RACE',
+studysample_withcuts = update_from_marker(
+    target_dataframe=studysample_withcuts,
+    worksheet=race_worksheet,
+    marker_column='RACE_REVIEW_MARKER',
+    value_columns=[
         'RACE',
         'RACE_DESC'
     ]
-].drop_duplicates()
-
-
-
-#=========================================================
-# PL LOOKUP
-#=========================================================
-
-pl_keys = [
-    'D_SUBJECT',
-    'D_GRADE_CLEAN',
-    'D_PLCODE',
-    'D_PLDESC'
-]
-
-# standardize keys in both dataframes
-for col in pl_keys:
-
-    studysample_withcuts[col] = (
-        studysample_withcuts[col]
-        .astype('string')
-        .str.strip()
-        .replace('', pd.NA)
-    )
-
-    pl_worksheet[col] = (
-        pl_worksheet[col]
-        .astype('string')
-        .str.strip()
-        .replace('', pd.NA)
-    )
-
-# create identical keys that allow nulls to match
-for col in pl_keys:
-
-    studysample_withcuts[col] = (
-        studysample_withcuts[col]
-        .fillna('__NULL__')
-    )
-
-    pl_worksheet[col] = (
-        pl_worksheet[col]
-        .fillna('__NULL__')
-    )
-
-studysample_withcuts['_PL_KEY'] = (
-      studysample_withcuts['D_SUBJECT']
-    + '|'
-    + studysample_withcuts['D_GRADE_CLEAN']
-    + '|'
-    + studysample_withcuts['D_PLCODE']
-    + '|'
-    + studysample_withcuts['D_PLDESC']
 )
 
-pl_worksheet['_PL_KEY'] = (
-      pl_worksheet['D_SUBJECT']
-    + '|'
-    + pl_worksheet['D_GRADE_CLEAN']
-    + '|'
-    + pl_worksheet['D_PLCODE']
-    + '|'
-    + pl_worksheet['D_PLDESC']
+
+#==============================================================================
+# PROFICIENCY LEVEL
+#
+# PL_CODE and PL_DESC are taken directly from the edited worksheet.
+# If either worksheet cell was cleared, the corresponding value in
+# studysample_withcuts will become missing.
+#==============================================================================
+
+for col in ['REVIEWED_PL_CODE', 'REVIEWED_PL_DESC']:
+    if col not in studysample_withcuts.columns:
+        studysample_withcuts[col] = pd.NA
+
+
+studysample_withcuts = update_from_marker(
+    target_dataframe=studysample_withcuts,
+    worksheet=pl_worksheet,
+    marker_column='PL_REVIEW_MARKER',
+    value_columns=[
+        'REVIEWED_PL_CODE',
+        'REVIEWED_PL_DESC'
+    ]
 )
 
-# remove duplicate lookup rows
-pl_worksheet = pl_worksheet.drop_duplicates(
-    subset=['_PL_KEY']
-)
-
-# build lookup dictionaries
-pl_code_lookup = (
-    pl_worksheet
-    .set_index('_PL_KEY')['PL_CODE']
-)
-
-pl_desc_lookup = (
-    pl_worksheet
-    .set_index('_PL_KEY')['PL_DESC']
-)
-
-# overwrite existing values
+# UPDATE PL_CODE AND PL_DESC with reviewed data
+# original values prior to review are in the 
+# columns 'CUTS_PROFICIENCY_LEVEL', 'CUTS_PROFICIENCY_NAME'
 studysample_withcuts['PL_CODE'] = (
-    studysample_withcuts['_PL_KEY']
-    .map(pl_code_lookup)
+    studysample_withcuts['REVIEWED_PL_CODE']
 )
 
 studysample_withcuts['PL_DESC'] = (
-    studysample_withcuts['_PL_KEY']
-    .map(pl_desc_lookup)
-)
-
-# cleanup
-studysample_withcuts.drop(
-    columns=['_PL_KEY'],
-    inplace=True
-)
-
-pl_worksheet.drop(
-    columns=['_PL_KEY'],
-    inplace=True
+    studysample_withcuts['REVIEWED_PL_DESC']
 )
 
 
-#------------------
-# QA
-#--------------------
+#==============================================================================
+# ROW-COUNT QA
+#==============================================================================
+
+ending_row_count = len(studysample_withcuts)
+
+if ending_row_count != starting_row_count:
+    raise ValueError(
+        f"Row count changed while applying worksheet edits. "
+        f"Before: {starting_row_count:,}; "
+        f"After: {ending_row_count:,}"
+    )
+
+print(
+    f"Worksheet updates completed without changing row count: "
+    f"{ending_row_count:,} rows"
+)
+
+
+#==============================================================================
+# MARKER QA
+#==============================================================================
+
+marker_qa = pd.DataFrame(
+    {
+        'MARKER': [
+            'SEX_REVIEW_MARKER',
+            'RACE_REVIEW_MARKER',
+            'PL_REVIEW_MARKER'
+        ],
+        'MISSING_MARKERS': [
+            studysample_withcuts[
+                'SEX_REVIEW_MARKER'
+            ].isna().sum(),
+
+            studysample_withcuts[
+                'RACE_REVIEW_MARKER'
+            ].isna().sum(),
+
+            studysample_withcuts[
+                'PL_REVIEW_MARKER'
+            ].isna().sum()
+        ],
+        'UNIQUE_MARKERS': [
+            studysample_withcuts[
+                'SEX_REVIEW_MARKER'
+            ].nunique(dropna=True),
+
+            studysample_withcuts[
+                'RACE_REVIEW_MARKER'
+            ].nunique(dropna=True),
+
+            studysample_withcuts[
+                'PL_REVIEW_MARKER'
+            ].nunique(dropna=True)
+        ]
+    }
+)
+
+print(marker_qa)
+
+
+#==============================================================================
+# UPDATED VALUE QA
+#==============================================================================
+
+qa_sex = (
+    studysample_withcuts[
+        [
+            'SEX_REVIEW_MARKER',
+            'SEX'
+        ]
+    ]
+    .value_counts(dropna=False)
+    .reset_index(name='COUNT')
+    .sort_values(
+        ['SEX_REVIEW_MARKER'],
+        na_position='last'
+    )
+)
+
+qa_race = (
+    studysample_withcuts[
+        [
+            'RACE_REVIEW_MARKER',
+            'RACE',
+            'RACE_DESC'
+        ]
+    ]
+    .value_counts(dropna=False)
+    .reset_index(name='COUNT')
+    .sort_values(
+        ['RACE_REVIEW_MARKER'],
+        na_position='last'
+    )
+)
+
 qa_pl = (
     studysample_withcuts[
         [
+            'PL_REVIEW_MARKER',
             'D_SUBJECT',
             'D_GRADE_CLEAN',
             'D_PLCODE',
@@ -1326,58 +1434,53 @@ qa_pl = (
     .value_counts(dropna=False)
     .reset_index(name='COUNT')
     .sort_values(
-        ['D_SUBJECT',
-         'D_GRADE_CLEAN',
-         'D_PLCODE',
-         'D_PLDESC']
+        [
+            'D_SUBJECT',
+            'D_GRADE_CLEAN',
+            'PL_REVIEW_MARKER'
+        ],
+        na_position='last'
     )
 )
 
+print(qa_sex)
+print(qa_race)
 print(qa_pl)
 
 
 
+#==============================================================================
+# QA
+#==============================================================================
+df = studysample_withcuts.copy()
 
-qa = (
-    pl_worksheet[
-        [
-            'D_SUBJECT',
-            'D_GRADE_CLEAN',
-            'D_PLCODE',
-            'D_PLDESC',
-            'PL_CODE',
-            'PL_DESC'
-        ]
-    ]
-)
 
-print(
-    qa.loc[
-        qa['D_PLDESC'].str.contains(
-            'Did Not Meet',
-            na=False
-        )
-    ]
-)
+# match-type counts
+df[['MATCH_TYPE','MATCH_DESCRIPTION']].value_counts(dropna = False)
 
-qa.loc[
-    qa['D_PLDESC'].str.contains(
-        'Did Not Meet',
-        na=False
-    )
-]
+# PHASE5
+looky_phase5 = df[df['MATCH_TYPE'] == 'PHASE_5']
 
-pl_worksheet[
-    ['D_SUBJECT',
-     'D_GRADE_CLEAN',
-     'D_PLCODE',
-     'D_PLDESC',
-     'PL_CODE',
-     'PL_DESC']
-].head(20)
+# PHASE4
+looky_phase4 = df[df['MATCH_TYPE'] == 'PHASE_4']
 
-qa_pl[
-    qa_pl['D_SUBJECT'].eq('MATH')
-    &
-    qa_pl['D_GRADE_CLEAN'].eq('3')
-].head(20)
+
+df[['PL_CODE', 'PL_DESC']].value_counts(dropna = False)
+
+
+df['D_TERM'].value_counts(dropna = False)
+
+
+
+
+#==============================================================================
+# UPLOAD STUDYSAMPLE-- ADD BACK THE RECORDS THAT DON'T MERGE with no
+#                     SS or SS_ADJ?
+#                    they were dopped and in qa_dropped_records
+#==============================================================================
+
+
+#qa----------------------------
+sample_mismatch = qa_dropped_from_cuts.loc[:,['MATCH_TYPE','MATCH_DESCRIPTION','D_DISTRICTNAME','D_STATE_STID','D_DOB',
+                                          'M_GRADE_ORDINAL','D_GRADE','D_TESTNAME','D_SS', 'D_PLCODE', 'D_PLDESC']]
+
