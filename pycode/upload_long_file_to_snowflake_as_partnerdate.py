@@ -44,40 +44,61 @@ else:
 # FINAL NULL STANDARDIZATION
 # ----------------------------------------
 
-# Convert empty strings to missing
-obj_cols = df_long.select_dtypes(include=['object', 'string']).columns
+# Text columns
+text_cols = df_long.select_dtypes(
+    include=["object", "string"]
+).columns
 
-df_long[obj_cols] = (
-    df_long[obj_cols]
-    .replace(r'^\s*$', pd.NA, regex=True)
+# Trim whitespace
+for col in text_cols:
+    df_long[col] = df_long[col].astype("string").str.strip()
+
+# Standardize common missing values
+df_long = df_long.replace(
+    [
+        "",      # blank strings
+        "NA",
+        "N/A",
+        "NULL",
+        "null",
+        "None",
+        "none",
+        "nan",
+        "<NA>"
+    ],
+    pd.NA
 )
 
-# Optional: convert placeholder strings
-df_long[obj_cols] = (
-    df_long[obj_cols]
-    .replace({
-        'NA': pd.NA,
-        'N/A': pd.NA,
-        'NULL': pd.NA,
-        'null': pd.NA
-    })
+# Optional audit report
+print("\nMissing Values by Column:")
+print(
+    df_long.isna()
+           .sum()
+           .sort_values(ascending=False)
 )
 
-# Convert all pandas missing values to Python None
-df_long = df_long.where(pd.notna(df_long), None)
-    
-    
-CONN = establish_snowflake_connector(SNOWFLAKEUSER, ROLE, WAREHOUSE, DATABASE = DATABASE, SCHEMA = SCHEMA)
-  
+# ----------------------------------------
+# WRITE TO SNOWFLAKE
+# ----------------------------------------
+
+CONN = establish_snowflake_connector(
+    SNOWFLAKEUSER,
+    ROLE,
+    WAREHOUSE,
+    DATABASE=DATABASE,
+    SCHEMA=SCHEMA
+)
+
 success, nchunks, nrows, _ = write_pandas(
     CONN,
-    # df_long_with_settings,
     df_long,
-    table_name= partner_table_name,
+    table_name=partner_table_name,
     quote_identifiers=True,
-    overwrite=True, #if False appends data
+    overwrite=True,      # False = append
     auto_create_table=True
 )
+
+print(f"\nUpload complete: {nrows:,} rows")
 
 CONN.commit()
 CONN.close()
