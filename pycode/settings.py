@@ -57,7 +57,7 @@ SCHEMA = 'LINKING_STUDIES'
 # DATA_YEAR = TERM_NUMBER[:4] 
 # SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 
-# map_subject_codes = [2]  # for initial MAP counts
+# map_subject_codes = [1,2,4,100 ]  # for initial MAP counts
 # map_test_names = []             #comes from settings_xl if defined.  
 
 
@@ -133,6 +133,9 @@ SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 # map_subject_codes = [2] #for  MAP counts.  settings_xl will override if exists.
 # map_test_names = ['Growth: Reading 2-5 IN 2023 1.1'] # if SETTINGS_XL not yet created, can get map counts for tests
                     # named here.  Settings_xl will override this if it exists.
+
+
+
 
 
 #===============================================================

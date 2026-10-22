@@ -158,6 +158,18 @@ print(studysample_df.columns.tolist())
 
 
 
+#---------------------------
+# USE GRAADE OF TEST WHEN
+# AVAILABLE FOR MERGE TO 
+# CUTS. ELSE D_GRADE_CLEAN
+#--------------------------
+studysample_df['GRADE_OF_TEST'] = (
+    studysample_df['D_GRADE_OF_PARTNER_TEST']
+    .fillna(studysample_df['D_GRADE_CLEAN'])
+)
+
+studysample_df[['D_GRADE_OF_PARTNER_TEST','D_GRADE_CLEAN','GRADE_OF_TEST']].value_counts(dropna = False)
+
 #------------------------------------------------------------------------------
 # MERGE TO CUTS TABLE
 #------------------------------------------------------------------------------
@@ -229,9 +241,12 @@ cuts_df['CUTS_D_SUBJECT'] = cuts_df['CUTS_D_SUBJECT'].astype(str).str.strip().st
 
 
 # ------------------------------------------------------------
+# studysample_for_merge----
+# 
 # Add a temporary unique identifier to each study-sample row.
 # This lets us determine whether each original row ultimately
 # matches exactly one cuts record.
+# 
 # ------------------------------------------------------------
 studysample_for_merge = (
     studysample_df
@@ -246,6 +261,9 @@ studysample_for_merge['_STUDY_ROW_ID'] = studysample_for_merge.index
 # Merge the study sample with all potentially applicable cuts.
 # Use a left merge so unmatched study-sample rows are retained
 # long enough to be written to the QA file.
+#
+# uses GRAAE_OF_TEST which is inferred from test form
+# where available.  then Grade_clean.
 #
 # EOG by subject/grade/map_subject-- should be unique
 # EOC by subject/map_subject-- should be unique 
@@ -262,7 +280,7 @@ if STUDY_TYPE in ['EOG', 'SP']:
         how='left',
         left_on=[
             'D_SUBJECT',
-            'D_GRADE_CLEAN',
+            'GRADE_OF_TEST',
             'M_MEASUREMENT_SCALE_BID'
         ],
         right_on=[
@@ -938,6 +956,16 @@ if not os.path.exists(CUTS_DEMO_WORKSHEETS_FILE):
 
         for sheet_name, dataframe in output_dict.items():
 
+            dataframe = dataframe.copy()
+        
+            dataframe = dataframe.replace(
+                {
+                    pd.NA: '',
+                    np.nan: '',
+                    None: ''
+                }
+            )
+        
             dataframe.to_excel(
                 writer,
                 sheet_name=sheet_name,
@@ -958,15 +986,38 @@ else:
     print(CUTS_DEMO_WORKSHEETS_FILE)
     print()
     
+  
     
+  
+print(studysample_withcuts['D_PLCODE'].dtype)
+
+print(
+    studysample_withcuts[
+        studysample_withcuts['D_PLCODE'].isna()
+    ][['D_PLCODE','D_PLDESC']].head()
+)
     
+
+
+
+
+
+
+#===============================================================================
 #=============================================================================
 # PART 2-- manually EDIT THE ABOVE WORKSHEETS IF NECESSARY.
 # THEN HIT ENTER TO RESUME.
 #=============================================================================
-
+#===============================================================================
 print("/n SETP 1 complete. Please edit the Excel file now.")
 input("Press Enter to continue to Step 2...")
+
+
+
+
+
+
+
 
 #=============================================================================
 # PART 2-- manually EDIT THE ABOVE WORKSHEETS IF NECESSARY.
@@ -1002,113 +1053,19 @@ sex_worksheet = pd.read_excel(
 
 
 
-# ----------------------------------------------------------
-# UPLOAD MANUALLY EDITED WORKSHEETS TO SNOWFLAKE
-#
-# THIS WAS TO MERGE WORKSHEET EDITS INTO STUDYSAMPLE IN 
-# SNOWFLAKE.
-#
-# MAYBE NOT NECESSARY NOW AS WHOLE STUDYSAMPLE_QA IS BEING
-# DONWLOADED FOR UPDATES FROM WORKSHEETS.
-# ----------------------------------------------------------
-
-
-
-# CONN = establish_snowflake_connector(
-#     SNOWFLAKEUSER,
-#     ROLE,
-#     WAREHOUSE,
-#     DATABASE=DATABASE,
-#     SCHEMA=SCHEMA
-# )
-
-
-# #----------------------------------------------------------
-# #  pre_worksheet_scores
-# #----------------------------------------------------------
-# success, nchunks, nrows, _ = write_pandas(
-#     CONN,
-#     pre_worksheet_scores,
-#     table_name=pre_worksheet_scores_table_name,
-#     quote_identifiers=False,
-#     overwrite=True,
-#     auto_create_table=True
-# )
-
-# print(f"{pre_worksheet_scores}: {nrows:,} rows")
-
-
-# #----------------------------------------------------------
-# # SEX
-# #----------------------------------------------------------
-# success, nchunks, nrows, _ = write_pandas(
-#     CONN,
-#     sex_worksheet,
-#     table_name=sex_table_name,
-#     quote_identifiers=False,
-#     overwrite=True,
-#     auto_create_table=True
-# )
-
-# print(f"{sex_table_name}: {nrows:,} rows")
-
-
-# #----------------------------------------------------------
-# # PL
-# #----------------------------------------------------------
-# success, nchunks, nrows, _ = write_pandas(
-#     CONN,
-#     pl_worksheet,
-#     table_name=pl_table_name,
-#     quote_identifiers=False,
-#     overwrite=True,
-#     auto_create_table=True
-# )
-
-# print(f"{pl_table_name}: {nrows:,} rows")
-
-
-# #----------------------------------------------------------
-# # RACE
-# #----------------------------------------------------------
-# success, nchunks, nrows, _ = write_pandas(
-#     CONN,
-#     race_worksheet,
-#     table_name=race_table_name,
-#     quote_identifiers=False,
-    
-#     overwrite=True,
-#     auto_create_table=True
-# )
-
-# print(f"{race_table_name}: {nrows:,} rows")
-
-
-# CONN.commit()
-# CONN.close()
-
-# print("Worksheet uploads complete.")
-
-
-
-
 
 
 #==============================================================================
-# UPDATING STUDYSAMPE_WITHCUTS HERE
-#==============================================================================
-
-
-
-
-#==============================================================================
-# UPDATE STUDYSAMPLE_WITHCUTS USING REVIEW MARKERS
+# UPDATE studysample_edited USING REVIEW MARKERS
 #
 # Each worksheet marker must identify exactly one worksheet row.
 # Mapping by marker does not change the number of study-sample rows.
 #==============================================================================
 
-starting_row_count = len(studysample_withcuts)
+studysample_edited = studysample_withcuts.copy()
+
+
+starting_row_count = len(studysample_edited)
 
 
 def clean_marker_column(dataframe, marker_column):
@@ -1238,7 +1195,7 @@ def update_from_marker(
     if missing_from_worksheet:
         raise ValueError(
             f"{len(missing_from_worksheet):,} {marker_column} "
-            f"value(s) from studysample_withcuts were not found "
+            f"value(s) from studysample_edited were not found "
             f"in the edited worksheet: "
             f"{missing_from_worksheet}"
         )
@@ -1262,8 +1219,8 @@ def update_from_marker(
 # SEX
 #==============================================================================
 
-studysample_withcuts = update_from_marker(
-    target_dataframe=studysample_withcuts,
+studysample_edited = update_from_marker(
+    target_dataframe=studysample_edited,
     worksheet=sex_worksheet,
     marker_column='SEX_REVIEW_MARKER',
     value_columns=[
@@ -1276,8 +1233,8 @@ studysample_withcuts = update_from_marker(
 # RACE
 #==============================================================================
 
-studysample_withcuts = update_from_marker(
-    target_dataframe=studysample_withcuts,
+studysample_edited = update_from_marker(
+    target_dataframe=studysample_edited,
     worksheet=race_worksheet,
     marker_column='RACE_REVIEW_MARKER',
     value_columns=[
@@ -1292,16 +1249,16 @@ studysample_withcuts = update_from_marker(
 #
 # PL_CODE and PL_DESC are taken directly from the edited worksheet.
 # If either worksheet cell was cleared, the corresponding value in
-# studysample_withcuts will become missing.
+# studysample_edited will become missing.
 #==============================================================================
 
 for col in ['REVIEWED_PL_CODE', 'REVIEWED_PL_DESC']:
-    if col not in studysample_withcuts.columns:
-        studysample_withcuts[col] = pd.NA
+    if col not in studysample_edited.columns:
+        studysample_edited[col] = pd.NA
 
 
-studysample_withcuts = update_from_marker(
-    target_dataframe=studysample_withcuts,
+studysample_edited = update_from_marker(
+    target_dataframe=studysample_edited,
     worksheet=pl_worksheet,
     marker_column='PL_REVIEW_MARKER',
     value_columns=[
@@ -1313,12 +1270,12 @@ studysample_withcuts = update_from_marker(
 # UPDATE PL_CODE AND PL_DESC with reviewed data
 # original values prior to review are in the 
 # columns 'CUTS_PROFICIENCY_LEVEL', 'CUTS_PROFICIENCY_NAME'
-studysample_withcuts['PL_CODE'] = (
-    studysample_withcuts['REVIEWED_PL_CODE']
+studysample_edited['PL_CODE'] = (
+    studysample_edited['REVIEWED_PL_CODE']
 )
 
-studysample_withcuts['PL_DESC'] = (
-    studysample_withcuts['REVIEWED_PL_DESC']
+studysample_edited['PL_DESC'] = (
+    studysample_edited['REVIEWED_PL_DESC']
 )
 
 
@@ -1326,7 +1283,7 @@ studysample_withcuts['PL_DESC'] = (
 # ROW-COUNT QA
 #==============================================================================
 
-ending_row_count = len(studysample_withcuts)
+ending_row_count = len(studysample_edited)
 
 if ending_row_count != starting_row_count:
     raise ValueError(
@@ -1353,28 +1310,28 @@ marker_qa = pd.DataFrame(
             'PL_REVIEW_MARKER'
         ],
         'MISSING_MARKERS': [
-            studysample_withcuts[
+            studysample_edited[
                 'SEX_REVIEW_MARKER'
             ].isna().sum(),
 
-            studysample_withcuts[
+            studysample_edited[
                 'RACE_REVIEW_MARKER'
             ].isna().sum(),
 
-            studysample_withcuts[
+            studysample_edited[
                 'PL_REVIEW_MARKER'
             ].isna().sum()
         ],
         'UNIQUE_MARKERS': [
-            studysample_withcuts[
+            studysample_edited[
                 'SEX_REVIEW_MARKER'
             ].nunique(dropna=True),
 
-            studysample_withcuts[
+            studysample_edited[
                 'RACE_REVIEW_MARKER'
             ].nunique(dropna=True),
 
-            studysample_withcuts[
+            studysample_edited[
                 'PL_REVIEW_MARKER'
             ].nunique(dropna=True)
         ]
@@ -1389,7 +1346,7 @@ print(marker_qa)
 #==============================================================================
 
 qa_sex = (
-    studysample_withcuts[
+    studysample_edited[
         [
             'SEX_REVIEW_MARKER',
             'SEX'
@@ -1404,7 +1361,7 @@ qa_sex = (
 )
 
 qa_race = (
-    studysample_withcuts[
+    studysample_edited[
         [
             'RACE_REVIEW_MARKER',
             'RACE',
@@ -1420,7 +1377,7 @@ qa_race = (
 )
 
 qa_pl = (
-    studysample_withcuts[
+    studysample_edited[
         [
             'PL_REVIEW_MARKER',
             'D_SUBJECT',
@@ -1449,10 +1406,33 @@ print(qa_pl)
 
 
 
-#==============================================================================
+
+#=================================
 # QA
+#=================================
+df = studysample_edited.copy()
+
+
 #==============================================================================
-df = studysample_withcuts.copy()
+# QA-- worksheets remerge
+#==============================================================================
+
+pl_remerge = df[['PL_REVIEW_MARKER','D_PLCODE', 'D_PLDESC','REVIEWED_PL_CODE','REVIEWED_PL_DESC']].value_counts(dropna = False).reset_index(name='COUNT')
+pl_remerge = pl_remerge.sort_values(
+                                    by='PL_REVIEW_MARKER',
+                                    key=lambda s: s.str.extract(r'(\d+)')[0].astype(int)
+                            )
+
+sex_remerge = df[['SEX_REVIEW_MARKER','M_STUDENT_GENDER','D_SEX', 'SEX']].value_counts(dropna = False)
+
+race_remerge = df[['RACE_REVIEW_MARKER','M_NWEA_ETHNIC_GROUP_NAME', 'D_ETHNICITY', 'D_RACE','RACE','RACE_DESC']].value_counts(dropna = False)
+
+
+
+
+#==============================================================================
+# QA-- studysample_edited holds dataframe corrected manually with worksheets
+#==============================================================================
 
 
 # match-type counts
@@ -1465,10 +1445,26 @@ looky_phase5 = df[df['MATCH_TYPE'] == 'PHASE_5']
 looky_phase4 = df[df['MATCH_TYPE'] == 'PHASE_4']
 
 
+# PHASE3
+looky_phase3 = df[df['MATCH_TYPE'] == 'PHASE_3']
+
+
 df[['PL_CODE', 'PL_DESC']].value_counts(dropna = False)
 
 
 df['D_TERM'].value_counts(dropna = False)
+
+
+#-----------------------------------------------------
+# qa- RELOOK AT records that dropped
+# because they fell in PL gaps
+# on cuts form.
+#-----------------------------------------------------
+sample_mismatch = qa_dropped_from_cuts.loc[:,['MATCH_TYPE','MATCH_DESCRIPTION',
+                                              'D_DISTRICTNAME','D_STATE_STID','D_DOB',
+                                               'M_GRADE_ORDINAL','D_GRADE','D_TESTNAME',
+                                               'D_SS', 'D_PLCODE', 'D_PLDESC']]
+
 
 
 
@@ -1480,7 +1476,256 @@ df['D_TERM'].value_counts(dropna = False)
 #==============================================================================
 
 
-#qa----------------------------
-sample_mismatch = qa_dropped_from_cuts.loc[:,['MATCH_TYPE','MATCH_DESCRIPTION','D_DISTRICTNAME','D_STATE_STID','D_DOB',
-                                          'M_GRADE_ORDINAL','D_GRADE','D_TESTNAME','D_SS', 'D_PLCODE', 'D_PLDESC']]
+# --------------------------------------------------------------
+# SAVE DATAFRAME AS PARQUET
+# --------------------------------------------------------------
+
+parquet_file = Path(DATA_ROOT) / "TX2026_STUDYSAMPLE_EOG_QA.parquet"
+
+df.to_parquet(
+    parquet_file,
+    index=False
+)
+
+print(f"Parquet saved: {parquet_file}")
+
+# --------------------------------------------------------------
+# FINAL NULL STANDARDIZATION
+# --------------------------------------------------------------
+
+df_upload = df.copy()
+
+# text columns
+text_cols = df_upload.select_dtypes(
+    include=["object", "string"]
+).columns
+
+# trim whitespace
+for col in text_cols:
+    df_upload[col] = (
+        df_upload[col]
+        .astype("string")
+        .str.strip()
+    )
+
+# standardize common missing values
+df_upload = df_upload.replace(
+    [
+        "",
+        "NA",
+        "N/A",
+        "NULL",
+        "null",
+        "None",
+        "none",
+        "nan",
+        "<NA>"
+    ],
+    pd.NA
+)
+
+print("\nMissing Values by Column:")
+print(
+    df_upload.isna()
+             .sum()
+             .sort_values(ascending=False)
+)
+
+# --------------------------------------------------------------
+# WRITE TO SNOWFLAKE
+# --------------------------------------------------------------
+
+table_name = "TX2026_STUDYSAMPLE_EOG_QA"
+
+CONN = establish_snowflake_connector(
+    SNOWFLAKEUSER,
+    ROLE,
+    WAREHOUSE,
+    DATABASE=DATABASE,
+    SCHEMA=SCHEMA
+)
+
+success, nchunks, nrows, _ = write_pandas(
+    CONN,
+    df_upload,
+    table_name=table_name,
+    quote_identifiers=True,
+    overwrite=True,          # replaces table contents
+    auto_create_table=True
+)
+
+print(f"\nUpload complete: {nrows:,} rows")
+print(f"Table: {table_name}")
+
+CONN.commit()
+CONN.close()
+
+
+
+
+#=============================================================================
+# write final TX2026_STUDYSAMLE_EOG to parquet and snowflake
+#=============================================================================
+
+#----------------------------------------------------
+# ONE TIME FIX FOR ALRINGTON IN INTEREST OF TIME
+#----------------------------------------------------
+# studysample_edited.loc[
+#     studysample_edited['D_DISTRICTNAME'] == 'ARLINGTON CLASSICS ACADEMY',
+#     'D_AGENCYCODE'
+# ] = '12580'
+
+
+
+study_df = pd.DataFrame({
+
+    'STATE'                         : studysample_edited['M_STATE'].astype('object'),
+
+    'TERM'                          : (
+        studysample_edited['M_TERM_NUMBER']
+        .astype(str)
+        .str[:4]
+        .radd(
+            studysample_edited['M_TERM_NUMBER']
+            .astype(str)
+            .str[-2:]
+            .map({
+                '01': 'WINTER ',
+                '02': 'SPRING ',
+                '03': 'SUMMER ',
+                '04': 'FALL '
+            })
+        )
+    ),
+
+    'AGENCY_CODE'                   : studysample_edited['D_AGENCYCODE'].astype('Int64'),
+
+    'DISTRICT_BUSINESS_IDENTIFIER'  : studysample_edited['M_DISTRICT_BUSINESS_IDENTIFIER'].astype('object'),
+
+    'D_DISTRICT_NAME'               : studysample_edited['D_DISTRICTNAME'].astype('object'),
+
+    'SCHOOL_BUSINESS_IDENTIFIER'    : studysample_edited['M_SCHOOL_BUSINESS_IDENTIFIER'].astype('object'),
+
+    'D_SCHOOL_NAME'                 : studysample_edited['D_SCHOOLNAME'].astype('object'),
+
+    'SUBJECT'                       : studysample_edited['M_MEASUREMENT_SCALE_BID'].astype('Int64'),
+
+    'D_SUBJECT'                     : studysample_edited['CUTS_D_SUBJECT'].astype('object'),
+
+    'GRADE'                         : studysample_edited['GRADE_OF_TEST'].astype('Int64'),
+
+    'STUDENT_BUSINESS_IDENTIFIER'   : studysample_edited['M_STUDENT_BUSINESS_IDENTIFIER'].astype('object'),
+
+    'SEX'                           : studysample_edited['SEX'].astype('Int64'),
+
+    'RACE'                          : studysample_edited['RACE'].astype('Int64'),
+
+    'RACE_DESC'                     : studysample_edited['RACE_DESC'].astype('object'),
+
+    'IRIT'                          : studysample_edited['M_IRIT'].astype('Int64'),
+
+    'SEM'                           : studysample_edited['M_SEM'].astype('float64'),
+
+    'SCALE_SCORE'                   : studysample_edited['SS_ADJ'].astype('Int64'),
+
+    'PL_CODE'                       : studysample_edited['PL_CODE'].astype('Int64'),
+
+    'PL_DESC'                       : studysample_edited['PL_DESC'].astype('object'),
+
+    'M_TEST_NAME'                   : studysample_edited['M_TEST_NAME'].astype('object'),
+
+    'TEST_EVENT_BUSINESS_IDENTIFIER': studysample_edited[
+                                        'M_TEST_EVENT_BUSINESS_IDENTIFIER'
+                                     ].astype('object'),
+
+    'M_TEST_DATE'                   : pd.to_datetime(
+                                        studysample_edited['M_FORMATTED_TESTDATE']
+                                     ).dt.date,
+
+    'M_SEX'                         : studysample_edited['M_STUDENT_GENDER'].astype('object'),
+
+    'M_RACE_DESC'                   : studysample_edited[
+                                        'M_NWEA_ETHNIC_GROUP_NAME'
+                                     ].astype('object'),
+    
+    'M_GRADE'                       :  studysample_edited['M_GRADE_ORDINAL'].astype('Int64'),
+
+    'D_LOCAL_STID'                  : studysample_edited['D_LOCAL_STID'].astype(str).str.replace(r'\.0$', '', regex=True),
+
+    'D_STATE_STID'                  : studysample_edited['D_STATE_STID'].astype(str).str.replace(r'\.0$', '', regex=True),
+
+    'D_GRADE'                       : studysample_edited['D_GRADE'].astype(str).str.replace(r'\.0$', '', regex=True),
+
+    'D_TEST_NAME'                   : studysample_edited['D_TESTNAME'].astype('object'),
+
+    'D_TEST_DATE'                   : studysample_edited['D_TESTDATE'].astype('object'),
+
+    'D_SEX'                         : studysample_edited['D_SEX'].astype('object'),
+
+    'D_RACE'                        : studysample_edited['D_RACE'].astype('object'),
+
+    'D_ETH'                         : studysample_edited['D_ETHNICITY'].astype('object'),
+
+    'D_PL'                          : studysample_edited['D_PLDESC'].astype('object'),
+
+    'D_PL_CODE'                     : studysample_edited['D_PLCODE'].astype('object'),
+
+    'D_SPED'                        : studysample_edited['D_SPED'].astype('object'),
+
+    'D_ELL'                         : studysample_edited['D_ELL'].astype('object'),
+
+    'D_IEP'                         : studysample_edited['D_IEP'].astype('object'),
+
+    'D_FRL'                         : studysample_edited['D_FRL'].astype('object'),
+
+    'D_SEC504'                      : studysample_edited['D_SEC504'].astype('object'),
+    
+    'DISTRICT_FILE_NAME'            : studysample_edited['D_FILENAMEFROMDISTRICT'].astype(str).str.replace(r'\.0$', '', regex=True),
+})
+
+
+looky = study_df.head(1000)
+
+
+# --------------------------------------------------------------
+# SAVE final studysample eog  DATAFRAME AS PARQUET
+# --------------------------------------------------------------
+
+parquet_file = Path(DATA_ROOT) / "TX2026_STUDYSAMPLE_EOG.parquet"
+
+study_df.to_parquet(
+    parquet_file,
+    index=False
+)
+
+print(f"Parquet saved: {parquet_file}")
+
+# --------------------------------------------------------------
+# WRITE TO SNOWFLAKE
+# --------------------------------------------------------------
+
+table_name = "TX2026_STUDYSAMPLE_EOG"
+
+CONN = establish_snowflake_connector(
+    SNOWFLAKEUSER,
+    ROLE,
+    WAREHOUSE,
+    DATABASE=DATABASE,
+    SCHEMA=SCHEMA
+)
+
+success, nchunks, nrows, _ = write_pandas(
+    CONN,
+    study_df,
+    table_name=table_name,
+    quote_identifiers=True,
+    overwrite=True,
+    auto_create_table=True
+)
+
+print(f"\nUpload complete: {nrows:,} rows")
+print(f"Table: {table_name}")
+
+CONN.commit()
+CONN.close()
 
