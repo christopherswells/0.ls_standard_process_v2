@@ -28,7 +28,10 @@ from common.ls_map_count_functions import *
 #  ADDITIONAL SETTINGS
 #------------------------------------------------------------------------------
 
-STUDY_TYPE = 'EOG'
+STUDY_TYPE = 'EOC'
+
+# USING 'HS' IN CUTS FILE FOR CLARITY.  EOC/EOG LOOK VERY SIMILAR IN THE FILE.
+SETTINGS_STUDY_TYPE = 'HS'   #USED IN QUERY OF PARTICULAR STUDY (EOG/HS/TSIA/SPANISH)
 
 
 
@@ -54,6 +57,12 @@ race_table_name.replace('"', '')
 
 print(repr(race_table_name))
 
+
+#OUTPUT-- both studysample_{TYPE}_QA and studysample_{type} created
+studysample_table_name = f"{STATE_ABR}{STUDY_YEAR}_STUDYSAMPLE_{STUDY_TYPE}"
+studysample_qa_table_name = f"{STATE_ABR}{STUDY_YEAR}_STUDYSAMPLE_{STUDY_TYPE}_QA"
+
+
 #------------------------------------------------------------------------------
 # CUTS / DEMOGRAPHICS FILE-- STANDARD NAME
 #------------------------------------------------------------------------------
@@ -75,8 +84,11 @@ if not CUTS_DEMO_FILE.exists():
 #------------------------------------------------------------------------------
 # CUTS / DEMOGRAPHICS FILE-- NON-STANDARD
 #------------------------------------------------------------------------------
-    
-CUTS_FILE = f"{STATE_ABR}_Cuts_Demographics_{STUDY_TYPE}_cw.xlsx"
+  
+# FROM TX EOG.  DUE TO   
+# CUTS_FILE = f"{STATE_ABR}_Cuts_Demographics_{STUDY_TYPE}_cw.xlsx"
+
+CUTS_FILE = f"{STATE_ABR}_Cuts_Demographics_{STUDY_TYPE}.xlsx"
 
 CUTS_DEMO_FILE = os.path.join(
     DATA_ROOT,
@@ -134,7 +146,7 @@ from research_prd_grd_db.linking_studies.tx2026_studysample_qa
 
 where match_type <> 'UNMATCHED'
   and D_ss is not null
-  and settings_study_type = '{STUDY_TYPE}'
+  and settings_study_type = '{SETTINGS_STUDY_TYPE}'
 
 order by M_student_business_identifier
 """
@@ -180,7 +192,7 @@ studysample_df[['D_GRADE_OF_PARTNER_TEST','D_GRADE_CLEAN','GRADE_OF_TEST']].valu
 # ADD LOSS / HOSS TO CUT SCORES  EOG dif from EOC
 #------------------------------------------------------------------------------
 
-if STUDY_TYPE in ['EOG', 'SP']:
+if STUDY_TYPE in ['EOG', 'SPANISH']:
 
     loss_hoss_groups = [
         'D_SUBJECT',
@@ -188,7 +200,7 @@ if STUDY_TYPE in ['EOG', 'SP']:
         'GRADE'
     ]
 
-else:   # EOC / HS
+else:   # EOC / HS / OTHERS
 
     loss_hoss_groups = [
         'D_SUBJECT',
@@ -238,6 +250,10 @@ cuts_df = cuts_df.rename(
 studysample_df['D_SUBJECT'] = studysample_df['D_SUBJECT'].astype(str).str.strip().str.upper()
 cuts_df['CUTS_D_SUBJECT'] = cuts_df['CUTS_D_SUBJECT'].astype(str).str.strip().str.upper()
 
+# the cuts file D_SUBJECT does not always match the data template. 
+# use studysample_df['SETTINGS_CUTS_SUBJECT'] to merge to cuts.
+studysample_df['SETTINGS_CUTS_SUBJECT'] = studysample_df['SETTINGS_CUTS_SUBJECT'].astype(str).str.strip().str.upper()
+
 
 
 # ------------------------------------------------------------
@@ -272,21 +288,24 @@ studysample_for_merge['_STUDY_ROW_ID'] = studysample_for_merge.index
 #
 # This will be the exploded merge prior to cuts applied to data. 
 # ------------------------------------------------------------
-if STUDY_TYPE in ['EOG', 'SP']:
+if STUDY_TYPE in ['EOG', 'SPANISH']:
 
     cuts_merge = pd.merge(
         studysample_for_merge,
         cuts_df,
         how='left',
         left_on=[
-            'D_SUBJECT',
-            'GRADE_OF_TEST',
-            'M_MEASUREMENT_SCALE_BID'
+            # 'D_SUBJECT',
+            'SETTINGS_CUTS_SUBJECT',
+            'GRADE_OF_TEST'
+            # ,
+            # 'M_MEASUREMENT_SCALE_BID'
         ],
         right_on=[
             'CUTS_D_SUBJECT',
-            'CUTS_GRADE',
-            'CUTS_SUBJECT'
+            'CUTS_GRADE'
+            # ,
+            # 'CUTS_SUBJECT'
         ],
         indicator=True
     )
@@ -298,12 +317,15 @@ else:
         cuts_df,
         how='left',
         left_on=[
-            'D_SUBJECT',
-            'M_MEASUREMENT_SCALE_BID'
+            # 'D_SUBJECT',
+            'SETTINGS_CUTS_SUBJECT'
+            # ,
+            # 'M_MEASUREMENT_SCALE_BID'
         ],
         right_on=[
-            'CUTS_D_SUBJECT',
-            'CUTS_SUBJECT'
+            'CUTS_D_SUBJECT'
+            # ,
+            # 'CUTS_SUBJECT'
         ],
         indicator=True
     )
@@ -1470,7 +1492,8 @@ sample_mismatch = qa_dropped_from_cuts.loc[:,['MATCH_TYPE','MATCH_DESCRIPTION',
 
 
 #==============================================================================
-# UPLOAD STUDYSAMPLE-- ADD BACK THE RECORDS THAT DON'T MERGE with no
+# UPLOAD STUDYSAMPLE QA 
+#  -- ADD BACK THE RECORDS THAT DON'T MERGE with no
 #                     SS or SS_ADJ?
 #                    they were dopped and in qa_dropped_records
 #==============================================================================
@@ -1480,7 +1503,7 @@ sample_mismatch = qa_dropped_from_cuts.loc[:,['MATCH_TYPE','MATCH_DESCRIPTION',
 # SAVE DATAFRAME AS PARQUET
 # --------------------------------------------------------------
 
-parquet_file = Path(DATA_ROOT) / "TX2026_STUDYSAMPLE_EOG_QA.parquet"
+parquet_file = Path(DATA_ROOT) / studysample_qa_table_name
 
 df.to_parquet(
     parquet_file,
@@ -1535,7 +1558,7 @@ print(
 # WRITE TO SNOWFLAKE
 # --------------------------------------------------------------
 
-table_name = "TX2026_STUDYSAMPLE_EOG_QA"
+table_name = studysample_qa_table_name
 
 CONN = establish_snowflake_connector(
     SNOWFLAKEUSER,
@@ -1576,122 +1599,175 @@ CONN.close()
 # ] = '12580'
 
 
+if STUDY_TYPE in ['EOG', 'SPANISH']:
 
-study_df = pd.DataFrame({
-
-    'STATE'                         : studysample_edited['M_STATE'].astype('object'),
-
-    'TERM'                          : (
-        studysample_edited['M_TERM_NUMBER']
-        .astype(str)
-        .str[:4]
-        .radd(
+    study_df = pd.DataFrame({
+    
+        'STATE'                         : studysample_edited['M_STATE'].astype('object'),
+    
+        'TERM'                          : (
             studysample_edited['M_TERM_NUMBER']
             .astype(str)
-            .str[-2:]
-            .map({
-                '01': 'WINTER ',
-                '02': 'SPRING ',
-                '03': 'SUMMER ',
-                '04': 'FALL '
-            })
-        )
-    ),
+            .str[:4]
+            .radd(
+                studysample_edited['M_TERM_NUMBER']
+                .astype(str)
+                .str[-2:]
+                .map({
+                    '01': 'WINTER ',
+                    '02': 'SPRING ',
+                    '03': 'SUMMER ',
+                    '04': 'FALL '
+                })
+            )
+        ),    
+        'AGENCY_CODE'                   : studysample_edited['D_AGENCYCODE'].astype('Int64'),    
+        'DISTRICT_BUSINESS_IDENTIFIER'  : studysample_edited['M_DISTRICT_BUSINESS_IDENTIFIER'].astype('object'),    
+        'D_DISTRICT_NAME'               : studysample_edited['D_DISTRICTNAME'].astype('object'),    
+        'SCHOOL_BUSINESS_IDENTIFIER'    : studysample_edited['M_SCHOOL_BUSINESS_IDENTIFIER'].astype('object'),    
+        'D_SCHOOL_NAME'                 : studysample_edited['D_SCHOOLNAME'].astype('object'),    
+        'SUBJECT'                       : studysample_edited['M_MEASUREMENT_SCALE_BID'].astype('Int64'),    
+        'D_SUBJECT'                     : studysample_edited['CUTS_D_SUBJECT'].astype('object'),    
+        'GRADE'                         : studysample_edited['GRADE_OF_TEST'].astype('Int64'),    
+        'STUDENT_BUSINESS_IDENTIFIER'   : studysample_edited['M_STUDENT_BUSINESS_IDENTIFIER'].astype('object'),    
+        'SEX'                           : studysample_edited['SEX'].astype('Int64'),    
+        'RACE'                          : studysample_edited['RACE'].astype('Int64'),    
+        'RACE_DESC'                     : studysample_edited['RACE_DESC'].astype('object'),    
+        'IRIT'                          : studysample_edited['M_IRIT'].astype('Int64'),    
+        'SEM'                           : studysample_edited['M_SEM'].astype('float64'),    
+        'SCALE_SCORE'                   : studysample_edited['SS_ADJ'].astype('Int64'),    
+        
+        # 'SS_ADJ'?-- THIS WAS NOT IN TX EOG
+        
+        'PL_CODE'                       : studysample_edited['PL_CODE'].astype('Int64'),    
+        'PL_DESC'                       : studysample_edited['PL_DESC'].astype('object'),    
+        'M_TEST_NAME'                   : studysample_edited['M_TEST_NAME'].astype('object'),    
+        'TEST_EVENT_BUSINESS_IDENTIFIER': studysample_edited[
+                                            'M_TEST_EVENT_BUSINESS_IDENTIFIER'
+                                         ].astype('object'),    
+        'M_TEST_DATE'                   : pd.to_datetime(
+                                            studysample_edited['M_FORMATTED_TESTDATE']
+                                         ).dt.date,    
+        'M_SEX'                         : studysample_edited['M_STUDENT_GENDER'].astype('object'),    
+        'M_RACE_DESC'                   : studysample_edited[
+                                            'M_NWEA_ETHNIC_GROUP_NAME'
+                                         ].astype('object'),        
+        'M_GRADE'                       :  studysample_edited['M_GRADE_ORDINAL'].astype('Int64'),    
+        'D_LOCAL_STID'                  : studysample_edited['D_LOCAL_STID'].astype(str).str.replace(r'\.0$', '', regex=True),    
+        'D_STATE_STID'                  : studysample_edited['D_STATE_STID'].astype(str).str.replace(r'\.0$', '', regex=True),    
+        'D_GRADE'                       : studysample_edited['D_GRADE'].astype(str).str.replace(r'\.0$', '', regex=True),    
+        'D_TEST_NAME'                   : studysample_edited['D_TESTNAME'].astype('object'),    
+        'D_TEST_DATE'                   : studysample_edited['D_TESTDATE'].astype('object'),    
+        'D_SEX'                         : studysample_edited['D_SEX'].astype('object'),    
+        'D_RACE'                        : studysample_edited['D_RACE'].astype('object'),    
+        'D_ETH'                         : studysample_edited['D_ETHNICITY'].astype('object'),    
+        'D_PL'                          : studysample_edited['D_PLDESC'].astype('object'),    
+        'D_PL_CODE'                     : studysample_edited['D_PLCODE'].astype('object'),    
+        'D_SPED'                        : studysample_edited['D_SPED'].astype('object'),    
+        'D_ELL'                         : studysample_edited['D_ELL'].astype('object'),    
+        'D_IEP'                         : studysample_edited['D_IEP'].astype('object'),    
+        'D_FRL'                         : studysample_edited['D_FRL'].astype('object'),    
+        'D_SEC504'                      : studysample_edited['D_SEC504'].astype('object'),        
+        'DISTRICT_FILE_NAME'            : studysample_edited['D_FILENAMEFROMDISTRICT'].astype(str).str.replace(r'\.0$', '', regex=True),
+    })
 
-    'AGENCY_CODE'                   : studysample_edited['D_AGENCYCODE'].astype('Int64'),
+else:   # study type in EOC/ or other
 
-    'DISTRICT_BUSINESS_IDENTIFIER'  : studysample_edited['M_DISTRICT_BUSINESS_IDENTIFIER'].astype('object'),
-
-    'D_DISTRICT_NAME'               : studysample_edited['D_DISTRICTNAME'].astype('object'),
-
-    'SCHOOL_BUSINESS_IDENTIFIER'    : studysample_edited['M_SCHOOL_BUSINESS_IDENTIFIER'].astype('object'),
-
-    'D_SCHOOL_NAME'                 : studysample_edited['D_SCHOOLNAME'].astype('object'),
-
-    'SUBJECT'                       : studysample_edited['M_MEASUREMENT_SCALE_BID'].astype('Int64'),
-
-    'D_SUBJECT'                     : studysample_edited['CUTS_D_SUBJECT'].astype('object'),
-
-    'GRADE'                         : studysample_edited['GRADE_OF_TEST'].astype('Int64'),
-
-    'STUDENT_BUSINESS_IDENTIFIER'   : studysample_edited['M_STUDENT_BUSINESS_IDENTIFIER'].astype('object'),
-
-    'SEX'                           : studysample_edited['SEX'].astype('Int64'),
-
-    'RACE'                          : studysample_edited['RACE'].astype('Int64'),
-
-    'RACE_DESC'                     : studysample_edited['RACE_DESC'].astype('object'),
-
-    'IRIT'                          : studysample_edited['M_IRIT'].astype('Int64'),
-
-    'SEM'                           : studysample_edited['M_SEM'].astype('float64'),
-
-    'SCALE_SCORE'                   : studysample_edited['SS_ADJ'].astype('Int64'),
-
-    'PL_CODE'                       : studysample_edited['PL_CODE'].astype('Int64'),
-
-    'PL_DESC'                       : studysample_edited['PL_DESC'].astype('object'),
-
-    'M_TEST_NAME'                   : studysample_edited['M_TEST_NAME'].astype('object'),
-
-    'TEST_EVENT_BUSINESS_IDENTIFIER': studysample_edited[
-                                        'M_TEST_EVENT_BUSINESS_IDENTIFIER'
-                                     ].astype('object'),
-
-    'M_TEST_DATE'                   : pd.to_datetime(
-                                        studysample_edited['M_FORMATTED_TESTDATE']
-                                     ).dt.date,
-
-    'M_SEX'                         : studysample_edited['M_STUDENT_GENDER'].astype('object'),
-
-    'M_RACE_DESC'                   : studysample_edited[
-                                        'M_NWEA_ETHNIC_GROUP_NAME'
-                                     ].astype('object'),
+    study_df = pd.DataFrame({
     
-    'M_GRADE'                       :  studysample_edited['M_GRADE_ORDINAL'].astype('Int64'),
-
-    'D_LOCAL_STID'                  : studysample_edited['D_LOCAL_STID'].astype(str).str.replace(r'\.0$', '', regex=True),
-
-    'D_STATE_STID'                  : studysample_edited['D_STATE_STID'].astype(str).str.replace(r'\.0$', '', regex=True),
-
-    'D_GRADE'                       : studysample_edited['D_GRADE'].astype(str).str.replace(r'\.0$', '', regex=True),
-
-    'D_TEST_NAME'                   : studysample_edited['D_TESTNAME'].astype('object'),
-
-    'D_TEST_DATE'                   : studysample_edited['D_TESTDATE'].astype('object'),
-
-    'D_SEX'                         : studysample_edited['D_SEX'].astype('object'),
-
-    'D_RACE'                        : studysample_edited['D_RACE'].astype('object'),
-
-    'D_ETH'                         : studysample_edited['D_ETHNICITY'].astype('object'),
-
-    'D_PL'                          : studysample_edited['D_PLDESC'].astype('object'),
-
-    'D_PL_CODE'                     : studysample_edited['D_PLCODE'].astype('object'),
-
-    'D_SPED'                        : studysample_edited['D_SPED'].astype('object'),
-
-    'D_ELL'                         : studysample_edited['D_ELL'].astype('object'),
-
-    'D_IEP'                         : studysample_edited['D_IEP'].astype('object'),
-
-    'D_FRL'                         : studysample_edited['D_FRL'].astype('object'),
-
-    'D_SEC504'                      : studysample_edited['D_SEC504'].astype('object'),
+        'STATE'                         : studysample_edited['M_STATE'].astype('object'),
     
-    'DISTRICT_FILE_NAME'            : studysample_edited['D_FILENAMEFROMDISTRICT'].astype(str).str.replace(r'\.0$', '', regex=True),
-})
-
+        'TERM'                          : (
+            studysample_edited['M_TERM_NUMBER']
+            .astype(str)
+            .str[:4]
+            .radd(
+                studysample_edited['M_TERM_NUMBER']
+                .astype(str)
+                .str[-2:]
+                .map({
+                    '01': 'WINTER ',
+                    '02': 'SPRING ',
+                    '03': 'SUMMER ',
+                    '04': 'FALL '
+                })
+            )
+        ),    
+        'AGENCY_CODE'                   : studysample_edited['D_AGENCYCODE'].astype('Int64'),    
+        'DISTRICT_BUSINESS_IDENTIFIER'  : studysample_edited['M_DISTRICT_BUSINESS_IDENTIFIER'].astype('object'),           
+        # 'D_DISTRICT_NAME'               : studysample_edited['D_DISTRICTNAME'].astype('object'),
+        'DISTRICT_NAME'                  : studysample_edited['D_DISTRICTNAME'].astype('object'),    
+        'SCHOOL_BUSINESS_IDENTIFIER'    : studysample_edited['M_SCHOOL_BUSINESS_IDENTIFIER'].astype('object'),    
+        # 'D_SCHOOL_NAME'                 : studysample_edited['D_SCHOOLNAME'].astype('object'),   
+        'SCHOOL_NAME'                    : studysample_edited['D_SCHOOLNAME'].astype('object'),  
+        'SUBJECT'                       : studysample_edited['M_MEASUREMENT_SCALE_BID'].astype('Int64'),    
+        # 'D_SUBJECT'                     : studysample_edited['CUTS_D_SUBJECT'].astype('object'),    
+        'GRADE'                         : studysample_edited['GRADE_OF_TEST'].astype('Int64'),   
+        
+        #EOC only
+        'EOC_GRADE'                     : 14,
+        
+        'STUDENT_BUSINESS_IDENTIFIER'   : studysample_edited['M_STUDENT_BUSINESS_IDENTIFIER'].astype('object'),    
+        'SEX'                           : studysample_edited['SEX'].astype('Int64'),    
+        'RACE'                          : studysample_edited['RACE'].astype('Int64'),    
+        'RACE_DESC'                     : studysample_edited['RACE_DESC'].astype('object'),    
+        'IRIT'                          : studysample_edited['M_IRIT'].astype('Int64'),    
+        'SEM'                           : studysample_edited['M_SEM'].astype('float64'),    
+        # 'SCALE_SCORE'                   : studysample_edited['SS_ADJ'].astype('Int64'), 
+        'SCALE_SCORE'                   : studysample_edited['SS_ADJ'].astype('Int64'), 
+        
+        # EOC ONLY?
+        'SS_ADJ'                        : studysample_edited['SS_ADJ'].astype('Int64'), 
+        
+        'PL_CODE'                       : studysample_edited['PL_CODE'].astype('Int64'),    
+        'PL_DESC'                       : studysample_edited['PL_DESC'].astype('object'),   
+        
+        'M_TEST_NAME'                   : studysample_edited['M_TEST_NAME'].astype('object'),  
+        'M_GRADE'                       : studysample_edited['M_GRADE_ORDINAL'].astype('Int64'),    
+        
+        # 'TEST_EVENT_BUSINESS_IDENTIFIER': studysample_edited[
+        #                                     'M_TEST_EVENT_BUSINESS_IDENTIFIER'
+        #                                  ].astype('object'),  
+        'M_TEST_KEY': studysample_edited[
+                                            'M_TEST_EVENT_BUSINESS_IDENTIFIER'
+                                         ].astype('object'),    
+        'M_TEST_DATE'                   : pd.to_datetime(
+                                            studysample_edited['M_FORMATTED_TESTDATE']
+                                          ).dt.date,        
+        'M_SEX'                         : studysample_edited['M_STUDENT_GENDER'].astype('object'),         
+        'M_RACE_DESC'                   : studysample_edited[
+                                            'M_NWEA_ETHNIC_GROUP_NAME'
+                                         ].astype('object'),        
+        # 'M_GRADE'                       : studysample_edited['M_GRADE_ORDINAL'].astype('Int64'),    
+        'D_LOCAL_STID'                  : studysample_edited['D_LOCAL_STID'].astype(str).str.replace(r'\.0$', '', regex=True),    
+        'D_STATE_STID'                  : studysample_edited['D_STATE_STID'].astype(str).str.replace(r'\.0$', '', regex=True),           
+        'D_DISTRICT_NAME'               : studysample_edited['D_DISTRICTNAME'].astype('object'),          
+        'D_SUBJECT'                     : studysample_edited['CUTS_D_SUBJECT'].astype('object'),         
+        'D_GRADE'                       : studysample_edited['D_GRADE'].astype(str).str.replace(r'\.0$', '', regex=True),   
+        # 'D_TEST_NAME'                   : studysample_edited['D_TESTNAME'].astype('object'),    
+        'D_TEST_DATE'                   : studysample_edited['D_TESTDATE'].astype('object'),    
+        'D_SEX'                         : studysample_edited['D_SEX'].astype('object'),   
+        'D_ETH'                         : studysample_edited['D_ETHNICITY'].astype('object'),  
+        'D_RACE'                        : studysample_edited['D_RACE'].astype('object'),    
+        'D_RETEST'                      : studysample_edited['D_RETEST'].astype('object'), 
+        'D_PL'                          : studysample_edited['D_PLDESC'].astype('object'),    
+        'D_PL_CODE'                     : studysample_edited['D_PLCODE'].astype('object'),    
+        'D_SPED'                        : studysample_edited['D_SPED'].astype('object'),    
+        'D_ELL'                         : studysample_edited['D_ELL'].astype('object'),    
+        'D_IEP'                         : studysample_edited['D_IEP'].astype('object'),    
+        'D_FRL'                         : studysample_edited['D_FRL'].astype('object'),    
+        'D_SEC504'                      : studysample_edited['D_SEC504'].astype('object'),        
+        'DISTRICT_FILE_NAME'            : studysample_edited['D_FILENAMEFROMDISTRICT'].astype(str).str.replace(r'\.0$', '', regex=True),
+    })
 
 looky = study_df.head(1000)
 
 
 # --------------------------------------------------------------
 # SAVE final studysample eog  DATAFRAME AS PARQUET
-# --------------------------------------------------------------
+# -------------------------------------------------------------- 
 
-parquet_file = Path(DATA_ROOT) / "TX2026_STUDYSAMPLE_EOG.parquet"
+parquet_file = Path(DATA_ROOT) / studysample_table_name
 
 study_df.to_parquet(
     parquet_file,
@@ -1704,7 +1780,7 @@ print(f"Parquet saved: {parquet_file}")
 # WRITE TO SNOWFLAKE
 # --------------------------------------------------------------
 
-table_name = "TX2026_STUDYSAMPLE_EOG"
+table_name = studysample_table_name
 
 CONN = establish_snowflake_connector(
     SNOWFLAKEUSER,

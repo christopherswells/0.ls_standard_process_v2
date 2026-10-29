@@ -33,9 +33,10 @@ from common.ls_map_count_functions import *
 #  ADDITIONAL SETTINGS
 #------------------------------------------------------------------------------
 
-STUDY_TYPE = 'EOG'
+STUDY_TYPE = 'EOC'         #USUALLY 'EOC', 'EOG' OR 'SPANISH'
 
-
+SETTINGS_STUDY_TYPE = 'HS' #using HS IN CUTS FILE FOR BETTTER CONTRAST (MISTAKES HAVE BEEN MADE BETWEEN C AND G)
+                            # use in query for studysample data.
 
 #------------------------------------------------------------------------------
 #  STANDARD PATHS AND FILES
@@ -80,8 +81,11 @@ if not CUTS_DEMO_FILE.exists():
 #------------------------------------------------------------------------------
 # CUTS / DEMOGRAPHICS FILE-- NON-STANDARD
 #------------------------------------------------------------------------------
-    
-CUTS_FILE = f"{STATE_ABR}_Cuts_Demographics_{STUDY_TYPE}_cw.xlsx"
+
+#FOR TX EOG    
+# CUTS_FILE = f"{STATE_ABR}_Cuts_Demographics_{STUDY_TYPE}_cw.xlsx"
+
+CUTS_FILE = f"{STATE_ABR}_Cuts_Demographics_{STUDY_TYPE}.xlsx"
 
 CUTS_DEMO_FILE = os.path.join(
     DATA_ROOT,
@@ -134,6 +138,7 @@ race_mapping = pd.read_excel(
 
 query = f"""
 select    
+    FLAG_REASON,
     M_student_business_identifier, 
     m_test_event_business_identifier,
     m_student_gender,
@@ -155,19 +160,18 @@ select
     d_testname,
     D_DISTRICTNAME,
     D_AGENCYCODE,
-    settings_study_type
+    settings_study_type,
+    SETTINGS_CUTS_SUBJECT,
+    D_FILENAMEFROMDISTRICT
 
 from research_prd_grd_db.linking_studies.tx2026_studysample_qa
 
 where match_type <> 'UNMATCHED'
   and D_ss is not null
-  and settings_study_type = '{STUDY_TYPE}'
+  and settings_study_type = '{SETTINGS_STUDY_TYPE}'
 
 order by M_student_business_identifier
 """
-
-
-
 
 
 studysample_df = query_snowflake(
@@ -182,6 +186,22 @@ studysample_df = query_snowflake(
 print(f"Rows returned: {studysample_df.shape[0]:,}")
 print(f"Columns returned: {studysample_df.shape[1]}")
 print(studysample_df.columns.tolist())
+
+
+# QA COUNTS AND CUTS_SUBJECT
+print(studysample_df[['D_SUBJECT','SETTINGS_CUTS_SUBJECT']].value_counts(dropna = False))
+print(studysample_df[['D_SUBJECT','SETTINGS_CUTS_SUBJECT','M_TEST_NAME']].value_counts(dropna = False))
+
+# QA flags
+print(studysample_df[['FLAG_REASON']].value_counts(dropna = False))
+
+#DUPS
+dupes = studysample_df[
+    studysample_df.duplicated(
+        subset=["STUDENT_BUSINESS_IDENTIFIER", "D_SUBJECT"],
+        keep=False
+    )
+]
 
 
 
@@ -202,13 +222,14 @@ if STUDY_TYPE in ['EOG', 'SP']:
         'SUBJECT',
         'GRADE'
     ]
-
-else:   # EOC / HS
+    
+else:   # EOC / HS / OTHER
 
     loss_hoss_groups = [
         'D_SUBJECT',
         'SUBJECT'
     ]
+
 
 
 cuts_df['CUTS_LOSS'] = (
@@ -251,6 +272,7 @@ cuts_df = cuts_df.rename(
 
 #prep strings for merge
 studysample_df['D_SUBJECT'] = studysample_df['D_SUBJECT'].astype(str).str.strip().str.upper()
+studysample_df['SETTINGS_CUTS_SUBJECT'] = studysample_df['SETTINGS_CUTS_SUBJECT'].astype(str).str.strip().str.upper()
 cuts_df['CUTS_D_SUBJECT'] = cuts_df['CUTS_D_SUBJECT'].astype(str).str.strip().str.upper()
 
 
@@ -273,6 +295,10 @@ studysample_for_merge['_STUDY_ROW_ID'] = studysample_for_merge.index
 # Merge the study sample with all potentially applicable cuts.
 # Use a left merge so unmatched study-sample rows are retained
 # long enough to be written to the QA file.
+#
+# MERGING ON STUDYSAMPLE.SETTINGS_CUTS_SUBJECT
+# settings has the D_SUBJECT exactly as in the cuts file
+# called SETTINGS_CUTS_SUBJECT.  that will match the cuts.
 # ------------------------------------------------------------
 if STUDY_TYPE in ['EOG', 'SP']:
 
@@ -281,7 +307,7 @@ if STUDY_TYPE in ['EOG', 'SP']:
         cuts_df,
         how='left',
         left_on=[
-            'D_SUBJECT',
+            'SETTINGS_CUTS_SUBJECT',
             'D_GRADE_CLEAN',
             'M_MEASUREMENT_SCALE_BID'
         ],
@@ -300,7 +326,7 @@ else:
         cuts_df,
         how='left',
         left_on=[
-            'D_SUBJECT',
+            'SETTINGS_CUTS_SUBJECT',
             'M_MEASUREMENT_SCALE_BID'
         ],
         right_on=[

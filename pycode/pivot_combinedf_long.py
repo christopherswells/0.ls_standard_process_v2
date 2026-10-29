@@ -1151,3 +1151,25 @@ print("\nOutput files written:")
 print(DATA_ROOT / "df_wide.parquet")
 print(DATA_ROOT / "df_long.parquet")
 print(DATA_ROOT / "removed_records.parquet")
+
+
+
+#---------------------------------------------
+#look at flags
+#---------------------------------------------
+
+flagged = df_long.loc[df_long['FLAG_REASON'].notna()].copy()
+
+# Write to Excel
+flagged_file = DATA_ROOT / "flagged_records.xlsx"
+
+with pd.ExcelWriter(flagged_file, engine="openpyxl") as writer:
+    flagged.to_excel(
+        writer,
+        sheet_name="flagged_records",
+        index=False
+    )
+
+print(f"Flagged records written to: {flagged_file}")
+print(f"Rows exported: {len(flagged):,}")
+    

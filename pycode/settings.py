@@ -135,6 +135,13 @@ SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
                     # named here.  Settings_xl will override this if it exists.
 
 
+# ------ LOUISIANNA ---------
+# TERM_NUMBER = '202502'      # TERM OF DATA
+# STUDY_YEAR = '2026'         # YEAR STUDY IS CONDUCTED--used in data and project path
+# STATE_NAME = 'LOUSIANA' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
+# STATE_ABR = 'LA'
+# DATA_YEAR = TERM_NUMBER[:4] 
+# SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
 
 
 
