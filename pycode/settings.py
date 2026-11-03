@@ -106,6 +106,7 @@ STATE_NAME = 'TEXAS' 	# FOR QUERY.  ALL CAPS WITH '_' SEPARATING WORDS.
 STATE_ABR = 'TX'
 DATA_YEAR = TERM_NUMBER[:4] 
 SUFFIXES = ["SS", "PLCODE", "PLDESC", "TESTNAME", "TESTDATE", "RETEST"]
+map_subject_codes = [1,2, 4, 100, 101, 102, 108]  # for initial MAP counts
 
 
 #------ COLORADO-------
