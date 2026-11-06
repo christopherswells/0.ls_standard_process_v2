@@ -526,14 +526,24 @@ grade_map = {
 
 
 def normalize_grade_text(value) -> str:
-    """Normalize grade text for lookup."""
-    return re.sub(r"\s+", "", str(value).strip().upper())
+    """Normalize grade text while retaining spaces between words."""
+    return re.sub(r"\s+", " ", str(value).strip().upper())
 
 
-reverse_grade_map = {
-    normalize_grade_text(variant): grade_number
+# Build patterns with non-alphanumeric boundaries.
+# Longer variants are tested first.
+grade_patterns = {
+    grade_number: [
+        re.compile(
+            rf"(?<![A-Z0-9]){re.escape(normalize_grade_text(variant))}(?![A-Z0-9])"
+        )
+        for variant in sorted(
+            variants,
+            key=lambda item: len(normalize_grade_text(item)),
+            reverse=True,
+        )
+    ]
     for grade_number, variants in grade_map.items()
-    for variant in variants
 }
 
 
@@ -541,9 +551,8 @@ def add_clean_grade_column(
     df: pd.DataFrame,
     column: str,
 ) -> Tuple[pd.DataFrame, List]:
-    """Create nullable Int64 grade-clean column."""
+    """Create the nullable Int64 D_GRADE_CLEAN column."""
     df = df.copy()
-    clean_column = f"{column}_CLEAN"
 
     def clean_grade(raw_value):
         if pd.isna(raw_value):
@@ -552,19 +561,31 @@ def add_clean_grade_column(
         raw_text = str(raw_value).strip()
         normalized_text = normalize_grade_text(raw_value)
 
+        # Handle values such as 10 and 10.0 first.
         try:
             numeric_grade = float(raw_text)
+
             if numeric_grade.is_integer():
                 numeric_grade = int(numeric_grade)
+
                 if numeric_grade in grade_map:
                     return numeric_grade
         except (ValueError, TypeError):
             pass
 
-        return reverse_grade_map.get(normalized_text, pd.NA)
+        # Check higher numeric grades first to prevent 10TH matching 1.
+        for grade_number in [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 14]:
+            if any(
+                pattern.search(normalized_text)
+                for pattern in grade_patterns[grade_number]
+            ):
+                return grade_number
 
-    df[clean_column] = df[column].apply(clean_grade).astype("Int64")
-    return df, df[clean_column].tolist()
+        return pd.NA
+
+    df["D_GRADE_CLEAN"] = df[column].apply(clean_grade).astype("Int64")
+
+    return df, df["D_GRADE_CLEAN"].tolist()
 
 
 # =========================================================
